@@ -26,13 +26,13 @@ npm install
 npm start
 ```
 
-A docker image is also available:
+A docker image and docker-compose are also available:
 
 ```bash
+docker-compose up --build -d
+```
 
-
-
-The transcribe service is now up and running and available on port `3000`.
+The transcribe service is now up and running and available on port `8000`.
 
 ### Endpoints
 
