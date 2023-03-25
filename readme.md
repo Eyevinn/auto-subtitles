@@ -53,24 +53,28 @@ To start a new transcribe job send a `POST` request to the `/transcribe` endpoin
 }
 ```
 
-The response will look like this:
+The response will look like this where result is the `WEBVTT` file as a string:
 
 ```json
 {
-  "workerId": "Soe3e4AHUZagazzq4tLIW",
-  "result": "
-    WEBVTT
-
-    00: 00: 00.000 --> 00: 00: 01.940
-    So into transcoding, I mean, I could
-
-    00: 00: 01.940 --> 00: 00: 03.700
-    probably add just a keyframe in the start
-
-    00: 00: 03.700 --> 00: 00: 06.700
-    and then just skip iFrames in the rest of the scenes.
-    "
+    "workerId": "BFabbcCi3IYuWOj6LfsgK",
+    "result": "WEBVTT\n\n00:00:00.000 --> 00:00:04.180\nor into transcoding I mean, I could probably add just the keyframe in the start and just\n\n00:00:04.180 --> 00:00:06.920\nskip I-frames and the rest of that.\n\n"
 }
+```
+
+Formatted output:
+
+```text
+WEBVTT
+
+00: 00: 00.000 --> 00: 00: 01.940
+So into transcoding, I mean, I could
+
+00: 00: 01.940 --> 00: 00: 03.700
+probably add just a keyframe in the start
+
+00: 00: 03.700 --> 00: 00: 06.700
+and then just skip iFrames in the rest of the scenes.
 ```
 
 ### Contributing
