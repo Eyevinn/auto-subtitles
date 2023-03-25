@@ -79,7 +79,7 @@ and then just skip iFrames in the rest of the scenes.
 
 ### Contributing
 
-See [CONTRIBUTING](CONTRIBUTING.md)
+See [contributing](contributing.md)
 
 # Support
 
