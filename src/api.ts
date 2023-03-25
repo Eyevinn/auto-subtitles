@@ -5,28 +5,104 @@ import swaggerUI from '@fastify/swagger-ui';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import { Static, Type } from '@sinclair/typebox';
 import { FastifyPluginCallback } from 'fastify';
+import {
+  TranscribeService,
+  State
+} from './TranscribeService/TranscribeService';
 
 const HelloWorld = Type.String({
   description: 'The magical words!'
 });
 
-export interface HealthcheckOptions {
+export interface Options {
   title: string;
 }
 
-const healthcheck: FastifyPluginCallback<HealthcheckOptions> = (fastify, opts, next) => {
+const transcribeWorkers: TranscribeService[] = [];
+const transcribeWorker = (): TranscribeService => {
+  const worker = transcribeWorkers.find(
+    (client) => client.state === State.INACTIVE
+  );
+  if (worker) return worker;
+  const newWorker = new TranscribeService();
+  newWorker.state = State.IDLE;
+  transcribeWorkers.push(newWorker);
+  return transcribeWorkers[transcribeWorkers.length - 1];
+};
+const healthcheck: FastifyPluginCallback<Options> = (fastify, opts, next) => {
   fastify.get<{ Reply: Static<typeof HelloWorld> }>(
     '/',
     {
       schema: {
-        description: 'Say hello',
+        description: 'healthcheck',
         response: {
           200: HelloWorld
         }
       }
     },
     async (_, reply) => {
-      reply.send('Hello, world! I am ' + opts.title);
+      reply.send(opts.title + ' is healthy 💖');
+    }
+  );
+  next();
+};
+const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
+  fastify.post<{ Body: { url: string } }>(
+    '/transcribe',
+    {
+      schema: {
+        description: 'Transcribe a remote file',
+        body: {
+          type: 'object',
+          properties: {
+            url: {
+              type: 'string'
+            }
+          }
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              workerId: {
+                type: 'string'
+              },
+              result: {
+                type: 'string'
+              }
+            }
+          },
+          500: {
+            type: 'object',
+            properties: {
+              workerId: {
+                type: 'string'
+              },
+              error: {
+                type: 'string'
+              }
+            }
+          }
+        }
+      }
+    },
+    async (request, reply) => {
+      const worker = transcribeWorker();
+      try {
+        const resp = {
+          workerId: worker.id,
+          result: await worker.transcribeRemoteFile(request.body.url)
+        };
+        reply
+          .code(200)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .send(resp);
+      } catch (err) {
+        reply
+          .code(500)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .send({ workerId: worker.id, error: err });
+      }
     }
   );
   next();
@@ -40,11 +116,7 @@ export default (opts: ApiOptions) => {
   const api = fastify({
     ignoreTrailingSlash: true
   }).withTypeProvider<TypeBoxTypeProvider>();
-
-  // register the cors plugin, configure it for better security
   api.register(cors);
-
-  // register the swagger plugins, it will automagically do magic
   api.register(swagger, {
     swagger: {
       info: {
@@ -57,9 +129,7 @@ export default (opts: ApiOptions) => {
   api.register(swaggerUI, {
     routePrefix: '/docs'
   });
-
   api.register(healthcheck, { title: opts.title });
-  // register other API routes here
-
+  api.register(transcribe, { title: opts.title });
   return api;
-}
+};

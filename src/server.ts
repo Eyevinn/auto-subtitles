@@ -1,6 +1,9 @@
 import api from './api';
+import * as dotenv from 'dotenv';
 
-const server = api({ title: '@eyevinn/typescript-nodejs' });
+dotenv.config({ path: '.env' });
+
+const server = api({ title: '@eyevinn/subtitle-generator' });
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8000;
 

@@ -1,19 +1,77 @@
-# {{Name}}
+# Subtitle Generator and API
 
-<!--
+Automatically generate subtitles from an input audio or video file using Open AI Whisper.
 
-## Requirements
-Add any external project dependencies such as node.js version etc here
+## Setup
+
+### Requirements
+
+The following environment variables can be set:
+```text
+OPENAI_API_KEY=<your-openapi-api-key>
+```
+
+Using an `.env` file is supported. Just rename `.env.example` to `.env` and insert your values.
+
+### FFmpeg
+
+FFmpeg is required to convert the input file/url to a format that Open AI Whisper can process. You can download it from [here](https://www.ffmpeg.org/download.html).
 
 ## Installation / Usage
 
-Add clear instructions on how to use the project here
+Starting the service is as simple as running:
 
-## Development
+```bash
+npm install
+npm start
+```
 
-Add clear instructions on how to start development of the project here
+A docker image is also available:
 
--->
+```bash
+
+
+
+The transcribe service is now up and running and available on port `3000`.
+
+### Endpoints
+
+Available endpoints are:
+
+| Endpoint                         | Method   | Description                                      |
+| -------------------------------- | -------- | -------------------------------------------------|
+| `/`                              | `GET`    | Heartbeat endpoint of service                    |
+| `/transcribe`                    | `POST`   | Create a new transcribe job. Provide url in body |
+
+## Example requests
+
+To start a new transcribe job send a `POST` request to the `/transcribe` endpoint with :
+
+```json
+{
+  "url": "https://example.net/vod-audio_en=128000.aac"
+}
+```
+
+The response will look like this:
+
+```json
+{
+  "workerId": "Soe3e4AHUZagazzq4tLIW",
+  "result": "
+    WEBVTT
+
+    00: 00: 00.000 --> 00: 00: 01.940
+    So into transcoding, I mean, I could
+
+    00: 00: 01.940 --> 00: 00: 03.700
+    probably add just a keyframe in the start
+
+    00: 00: 03.700 --> 00: 00: 06.700
+    and then just skip iFrames in the rest of the scenes.
+    "
+}
+```
 
 ### Contributing
 

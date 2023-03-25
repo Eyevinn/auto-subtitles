@@ -1,7 +1,7 @@
 {
-  "name": "@eyevinn/typescript-nodejs",
-  "version": "1.0.0",
-  "description": "The default typescript-nodejs template for eyevinn projects",
+  "name": "@eyevinn/subtitle-generator",
+  "version": "0.0.1",
+  "description": "Automatically generate subtitles from an input audio or video file using Open AI Whisper",
   "scripts": {
     "test": "jest",
     "prepare": "husky install",
@@ -15,15 +15,20 @@
   "engines": {
     "node": ">=18.15.0"
   },
+  "author": "Oscar Nord <oscar.nord@eyevinn.se>",
   "dependencies": {
     "@fastify/cors": "^8.2.0",
     "@fastify/swagger": "^8.3.1",
     "@fastify/swagger-ui": "^1.5.0",
     "@fastify/type-provider-typebox": "^2.4.0",
     "@sinclair/typebox": "^0.25.24",
-    "fastify": "^4.12.0",
     "nodemon": "^2.0.20",
-    "ts-node": "^10.9.1"
+    "ts-node": "^10.9.1",
+    "child_process": "^1.0.2",
+    "dotenv": "^16.0.3",
+    "fastify": "^4.15.0",
+    "nanoid": "^3.3.2",
+    "openai": "^3.2.1"
   },
   "devDependencies": {
     "@commitlint/cli": "^17.4.2",
