@@ -47,7 +47,7 @@ Available endpoints are:
 
 To start a new transcribe job send a `POST` request to the `/transcribe` endpoint with :
 
-```json
+```jsonc
 {
   "url": "https://example.net/vod-audio_en=128000.aac"
   "language": "en" // ISO 639-1 language code (https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) (optional)
