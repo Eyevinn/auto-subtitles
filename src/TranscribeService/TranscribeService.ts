@@ -103,6 +103,9 @@ export class TranscribeService {
     fs.unlinkSync(filePath);
     console.log(`Deleted ${filePath}`);
     this.jobState = State.INACTIVE;
+    if (format && ['json', 'verbose_json'].includes(format)) {
+      return JSON.stringify(resp) as unknown as CreateTranscriptionResponse;
+    }
     return resp;
   }
 }
