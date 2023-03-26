@@ -7,7 +7,8 @@ import { Static, Type } from '@sinclair/typebox';
 import { FastifyPluginCallback } from 'fastify';
 import {
   TranscribeService,
-  State
+  State,
+  TTranscribeFormat
 } from './TranscribeService/TranscribeService';
 
 const HelloWorld = Type.String({
@@ -47,7 +48,9 @@ const healthcheck: FastifyPluginCallback<Options> = (fastify, opts, next) => {
   next();
 };
 const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
-  fastify.post<{ Body: { url: string } }>(
+  fastify.post<{
+    Body: { url: string; language?: string; format?: TTranscribeFormat };
+  }>(
     '/transcribe',
     {
       schema: {
@@ -57,8 +60,15 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
           properties: {
             url: {
               type: 'string'
+            },
+            language: {
+              type: 'string' // language code in ISO 639-1 format (default: en)
+            },
+            format: {
+              type: 'string' // json, text, srt, verbose_json, vtt (default)
             }
-          }
+          },
+          required: ['url']
         },
         response: {
           200: {
@@ -91,7 +101,11 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
       try {
         const resp = {
           workerId: worker.id,
-          result: await worker.transcribeRemoteFile(request.body.url)
+          result: await worker.transcribeRemoteFile({
+            url: request.body.url,
+            language: request.body.language,
+            format: request.body.format
+          })
         };
         reply
           .code(200)

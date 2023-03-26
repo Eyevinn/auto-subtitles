@@ -8,6 +8,24 @@ export enum State {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE'
 }
+export type TTranscribeFormat =
+  | 'json'
+  | 'text'
+  | 'srt'
+  | 'verbose_json'
+  | 'vtt';
+
+export type TTranscribeLocalFile = {
+  filePath: string;
+  language?: string; // language code in ISO 639-1 format
+  format?: TTranscribeFormat;
+};
+
+export type TTranscribeRemoteFile = {
+  url: string;
+  language?: string; // language code in ISO 639-1 format
+  format?: TTranscribeFormat;
+};
 
 export class TranscribeService {
   private instanceId: string;
@@ -51,17 +69,19 @@ export class TranscribeService {
     this.jobState = status;
   }
 
-  async transcribeLocalFile(
-    filePath: string
-  ): Promise<CreateTranscriptionResponse> {
+  async transcribeLocalFile({
+    filePath,
+    language,
+    format
+  }: TTranscribeLocalFile): Promise<CreateTranscriptionResponse> {
     try {
       const resp = await this.openai.createTranscription(
         fs.createReadStream(filePath) as unknown,
         'whisper-1',
         undefined,
-        'vtt',
+        format ?? 'vtt',
         1,
-        'en'
+        language ?? 'en'
       );
       return resp.data;
     } catch (err) {
@@ -70,15 +90,18 @@ export class TranscribeService {
     }
   }
 
-  async transcribeRemoteFile(
-    url: string
-  ): Promise<CreateTranscriptionResponse> {
+  async transcribeRemoteFile({
+    url,
+    language,
+    format
+  }: TTranscribeRemoteFile): Promise<CreateTranscriptionResponse> {
     this.jobState = State.ACTIVE;
-    const path = await this.convertToMP3(url);
-    const resp = await this.transcribeLocalFile(path);
+    const filePath = await this.convertToMP3(url);
+    const resp = await this.transcribeLocalFile({ filePath, language, format });
+    // TODO: Find a way to not be dependent on the need to download the file locally
     // delete local file when done transcribing path is path
-    fs.unlinkSync(path);
-    console.log(`Deleted ${path}`);
+    fs.unlinkSync(filePath);
+    console.log(`Deleted ${filePath}`);
     this.jobState = State.INACTIVE;
     return resp;
   }
