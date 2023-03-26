@@ -121,6 +121,93 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
   );
   next();
 };
+const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
+  fastify.post<{
+    Body: {
+      url: string;
+      language?: string;
+      bucket: string;
+      key: string;
+      region?: string;
+      format?: TTranscribeFormat;
+    };
+  }>(
+    '/transcribe/s3',
+    {
+      schema: {
+        description: 'Transcribe a remote file and upload to S3',
+        body: {
+          type: 'object',
+          properties: {
+            url: {
+              type: 'string'
+            },
+            language: {
+              type: 'string' // language code in ISO 639-1 format (default: en)
+            },
+            format: {
+              type: 'string' // json, text, srt, verbose_json, vtt (default)
+            },
+            bucket: {
+              type: 'string'
+            },
+            key: {
+              type: 'string' // Name of uploaded file in S3
+            },
+            region: {
+              type: 'string'
+            }
+          },
+          required: ['url', 'bucket', 'key']
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              workerId: {
+                type: 'string'
+              }
+            }
+          },
+          500: {
+            type: 'object',
+            properties: {
+              workerId: {
+                type: 'string'
+              },
+              error: {
+                type: 'string'
+              }
+            }
+          }
+        }
+      }
+    },
+    async (request, reply) => {
+      const worker = transcribeWorker();
+      try {
+        worker.TranscribeRemoteFileS3({
+          url: request.body.url,
+          language: request.body.language,
+          format: request.body.format,
+          bucket: request.body.bucket,
+          key: request.body.key,
+          region: request.body.region
+        });
+        reply
+          .code(200)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .send({ workerId: worker.id });
+      } catch (err) {
+        reply
+          .code(500)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .send({ workerId: worker.id, error: err });
+      }
+    }
+  );
+  next();
+};
 
 export interface ApiOptions {
   title: string;
@@ -135,7 +222,7 @@ export default (opts: ApiOptions) => {
     swagger: {
       info: {
         title: opts.title,
-        description: 'hello',
+        description: 'Transcribe Service API',
         version: 'v1'
       }
     }
@@ -145,5 +232,6 @@ export default (opts: ApiOptions) => {
   });
   api.register(healthcheck, { title: opts.title });
   api.register(transcribe, { title: opts.title });
+  api.register(transcribeS3, { title: opts.title });
   return api;
 };

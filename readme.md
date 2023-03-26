@@ -9,6 +9,9 @@ Automatically generate subtitles from an input audio or video file using Open AI
 The following environment variables can be set:
 ```text
 OPENAI_API_KEY=<your-openapi-api-key>
+AWS_REGION=<your-aws-region> (optional can also be provided in payload)
+AWS_ACCESS_KEY_ID=<your-aws-access-key-id>
+AWS_SECRET_ACCESS_KEY=<your-aws-secret-access-key>
 ```
 
 Using an `.env` file is supported. Just rename `.env.example` to `.env` and insert your values.
@@ -38,10 +41,11 @@ The transcribe service is now up and running and available on port `8000`.
 
 Available endpoints are:
 
-| Endpoint                         | Method   | Description                                      |
-| -------------------------------- | -------- | -------------------------------------------------|
-| `/`                              | `GET`    | Heartbeat endpoint of service                    |
-| `/transcribe`                    | `POST`   | Create a new transcribe job. Provide url in body |
+| Endpoint                         | Method   | Description                                         |
+| -------------------------------- | -------- | ----------------------------------------------------|
+| `/`                              | `GET`    | Heartbeat endpoint of service                       |
+| `/transcribe`                    | `POST`   | Create a new transcribe job. Provide url in body    |
+| `/transcribe/s3`                 | `POST`   | Create a new transcribe job and upload result to s3 |
 
 ## Example requests
 

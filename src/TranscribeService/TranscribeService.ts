@@ -1,6 +1,7 @@
 import { OpenAIApi, Configuration, CreateTranscriptionResponse } from 'openai';
 import { spawn } from 'child_process';
 import { nanoid } from 'nanoid';
+import { uploadToS3 } from '../aws/upload';
 import fs from 'fs';
 
 export enum State {
@@ -29,12 +30,12 @@ export type TTranscribeRemoteFile = {
 
 export class TranscribeService {
   private instanceId: string;
-  private jobState: State;
+  private workerState: State;
   private openai: OpenAIApi;
 
   constructor(openApiKey?: string) {
     this.instanceId = nanoid();
-    this.jobState = State.INACTIVE;
+    this.workerState = State.INACTIVE;
     const config = new Configuration({
       apiKey: openApiKey ? openApiKey : process.env.OPENAI_API_KEY
     });
@@ -62,11 +63,11 @@ export class TranscribeService {
   }
 
   get state(): State {
-    return this.jobState;
+    return this.workerState;
   }
 
   set state(status: State) {
-    this.jobState = status;
+    this.workerState = status;
   }
 
   async transcribeLocalFile({
@@ -95,17 +96,57 @@ export class TranscribeService {
     language,
     format
   }: TTranscribeRemoteFile): Promise<CreateTranscriptionResponse> {
-    this.jobState = State.ACTIVE;
+    this.workerState = State.ACTIVE;
     const filePath = await this.convertToMP3(url);
     const resp = await this.transcribeLocalFile({ filePath, language, format });
     // TODO: Find a way to not be dependent on the need to download the file locally
     // delete local file when done transcribing path is path
     fs.unlinkSync(filePath);
     console.log(`Deleted ${filePath}`);
-    this.jobState = State.INACTIVE;
+    this.workerState = State.INACTIVE;
     if (format && ['json', 'verbose_json'].includes(format)) {
       return JSON.stringify(resp) as unknown as CreateTranscriptionResponse;
     }
     return resp;
+  }
+
+  async TranscribeRemoteFileS3({
+    url,
+    language,
+    format,
+    bucket,
+    key,
+    region
+  }: TTranscribeRemoteFile & {
+    bucket: string;
+    key: string;
+    region?: string;
+  }): Promise<void> {
+    try {
+      this.workerState = State.ACTIVE;
+      const filePath = await this.convertToMP3(url);
+      let resp = await this.transcribeLocalFile({ filePath, language, format });
+      if (format && ['json', 'verbose_json'].includes(format)) {
+        resp = JSON.stringify(resp) as unknown as CreateTranscriptionResponse;
+      }
+      if (!format) {
+        format = 'vtt';
+      }
+      uploadToS3({
+        bucket,
+        key,
+        format,
+        region,
+        content: JSON.stringify(resp)
+      });
+      // TODO: Find a way to not be dependent on the need to download the file locally
+      // delete local file when done transcribing path is path
+      fs.unlinkSync(filePath);
+      console.log(`Deleted ${filePath}`);
+      this.workerState = State.INACTIVE;
+    } catch (err) {
+      console.error(err);
+      this.workerState = State.INACTIVE;
+    }
   }
 }
