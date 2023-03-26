@@ -10,8 +10,8 @@ The following environment variables can be set:
 ```text
 OPENAI_API_KEY=<your-openapi-api-key>
 AWS_REGION=<your-aws-region> (optional can also be provided in payload)
-AWS_ACCESS_KEY_ID=<your-aws-access-key-id>
-AWS_SECRET_ACCESS_KEY=<your-aws-secret-access-key>
+AWS_ACCESS_KEY_ID=<your-aws-access-key-id> (optional, only needed when uploading to S3)
+AWS_SECRET_ACCESS_KEY=<your-aws-secret-access-key> (optional, only needed when uploading to S3)
 ```
 
 Using an `.env` file is supported. Just rename `.env.example` to `.env` and insert your values.
@@ -73,13 +73,13 @@ Formatted output:
 ```text
 WEBVTT
 
-00: 00: 00.000 --> 00: 00: 01.940
+00:00:00.000 --> 00:00:01.940
 So into transcoding, I mean, I could
 
-00: 00: 01.940 --> 00: 00: 03.700
+00:00:01.940 --> 00:00:03.700
 probably add just a keyframe in the start
 
-00: 00: 03.700 --> 00: 00: 06.700
+00:00:03.700 --> 00:00:06.700
 and then just skip iFrames in the rest of the scenes.
 ```
 
