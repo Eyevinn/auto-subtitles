@@ -4,12 +4,15 @@ networks:
     driver: bridge
 
 services:
-  autoabr-api:
+  subtitle-generator-api:
     build:
       context: .
     image: subtitle-generator
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
     ports:
       - 8000:8000
     expose:
