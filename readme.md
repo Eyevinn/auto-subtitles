@@ -7,6 +7,7 @@ Automatically generate subtitles from an input audio or video file using Open AI
 ### Requirements
 
 The following environment variables can be set:
+
 ```text
 OPENAI_API_KEY=<your-openapi-api-key>
 AWS_REGION=<your-aws-region> (optional can also be provided in payload)
@@ -41,11 +42,11 @@ The transcribe service is now up and running and available on port `8000`.
 
 Available endpoints are:
 
-| Endpoint                         | Method   | Description                                         |
-| -------------------------------- | -------- | ----------------------------------------------------|
-| `/`                              | `GET`    | Heartbeat endpoint of service                       |
-| `/transcribe`                    | `POST`   | Create a new transcribe job. Provide url in body    |
-| `/transcribe/s3`                 | `POST`   | Create a new transcribe job and upload result to s3 |
+| Endpoint         | Method | Description                                         |
+| ---------------- | ------ | --------------------------------------------------- |
+| `/`              | `GET`  | Heartbeat endpoint of service                       |
+| `/transcribe`    | `POST` | Create a new transcribe job. Provide url in body    |
+| `/transcribe/s3` | `POST` | Create a new transcribe job and upload result to s3 |
 
 ## Example requests
 
@@ -63,8 +64,8 @@ The response will look like this where result is the `WEBVTT` file as a string:
 
 ```json
 {
-    "workerId": "BFabbcCi3IYuWOj6LfsgK",
-    "result": "WEBVTT\n\n00:00:00.000 --> 00:00:04.180\nor into transcoding I mean, I could probably add just the keyframe in the start and just\n\n00:00:04.180 --> 00:00:06.920\nskip I-frames and the rest of that.\n\n"
+  "workerId": "BFabbcCi3IYuWOj6LfsgK",
+  "result": "WEBVTT\n\n00:00:00.000 --> 00:00:04.180\nor into transcoding I mean, I could probably add just the keyframe in the start and just\n\n00:00:04.180 --> 00:00:06.920\nskip I-frames and the rest of that.\n\n"
 }
 ```
 
@@ -87,7 +88,7 @@ and then just skip iFrames in the rest of the scenes.
 
 See [contributing](contributing.md)
 
-# Support
+## Support
 
 Join our [community on Slack](http://slack.streamingtech.se) where you can post any questions regarding any of our open source projects. Eyevinn's consulting business can also offer you:
 
@@ -97,8 +98,8 @@ Join our [community on Slack](http://slack.streamingtech.se) where you can post 
 
 Contact [sales@eyevinn.se](mailto:sales@eyevinn.se) if you are interested.
 
-# About Eyevinn Technology
+## About Eyevinn Technology
 
 [Eyevinn Technology](https://www.eyevinntechnology.se) is an independent consultant firm specialized in video and streaming. Independent in a way that we are not commercially tied to any platform or technology vendor. As our way to innovate and push the industry forward we develop proof-of-concepts and tools. The things we learn and the code we write we share with the industry in [blogs](https://dev.to/video) and by open sourcing the code we have written.
 
-Want to know more about Eyevinn and how it is to work here. Contact us at work@eyevinn.se!
+Want to know more about Eyevinn and how it is to work here. Contact us at <work@eyevinn.se>!
