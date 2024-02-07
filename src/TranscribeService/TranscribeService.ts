@@ -1,4 +1,5 @@
-import { OpenAIApi, Configuration, CreateTranscriptionResponse } from 'openai';
+import { OpenAI } from 'openai';
+import Configuration from 'openai';
 import { spawn } from 'child_process';
 import { nanoid } from 'nanoid';
 import { uploadToS3 } from '../aws/upload';
@@ -31,7 +32,7 @@ export type TTranscribeRemoteFile = {
 export class TranscribeService {
   private instanceId: string;
   private workerState: State;
-  private openai: OpenAIApi;
+  private openai: OpenAI;
 
   constructor(openApiKey?: string) {
     this.instanceId = nanoid();
@@ -39,7 +40,7 @@ export class TranscribeService {
     const config = new Configuration({
       apiKey: openApiKey ? openApiKey : process.env.OPENAI_API_KEY
     });
-    this.openai = new OpenAIApi(config);
+    this.openai = new OpenAI({ ...config });
   }
 
   private convertToMP3(videoUrl: string): Promise<string> {
@@ -74,17 +75,15 @@ export class TranscribeService {
     filePath,
     language,
     format
-  }: TTranscribeLocalFile): Promise<CreateTranscriptionResponse> {
+  }: TTranscribeLocalFile): Promise<string> {
     try {
-      const resp = await this.openai.createTranscription(
-        fs.createReadStream(filePath) as unknown,
-        'whisper-1',
-        undefined,
-        format ?? 'vtt',
-        1,
-        language ?? 'en'
-      );
-      return resp.data;
+      const resp = await this.openai.audio.transcriptions.create({
+        file: fs.createReadStream(filePath),
+        model: 'whisper-1',
+        response_format: format ?? 'vtt',
+        language: language ?? 'en'
+      });
+      return resp.text;
     } catch (err) {
       console.error(err);
       throw err;
@@ -95,7 +94,7 @@ export class TranscribeService {
     url,
     language,
     format
-  }: TTranscribeRemoteFile): Promise<CreateTranscriptionResponse> {
+  }: TTranscribeRemoteFile): Promise<string> {
     this.workerState = State.ACTIVE;
     const filePath = await this.convertToMP3(url);
     const resp = await this.transcribeLocalFile({ filePath, language, format });
@@ -105,7 +104,7 @@ export class TranscribeService {
     console.log(`Deleted ${filePath}`);
     this.workerState = State.INACTIVE;
     if (format && ['json', 'verbose_json'].includes(format)) {
-      return JSON.stringify(resp) as unknown as CreateTranscriptionResponse;
+      return JSON.stringify(resp);
     }
     return resp;
   }
@@ -127,7 +126,7 @@ export class TranscribeService {
       const filePath = await this.convertToMP3(url);
       let resp = await this.transcribeLocalFile({ filePath, language, format });
       if (format && ['json', 'verbose_json'].includes(format)) {
-        resp = JSON.stringify(resp) as unknown as CreateTranscriptionResponse;
+        resp = JSON.stringify(resp);
       }
       if (!format) {
         format = 'vtt';
