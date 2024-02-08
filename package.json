@@ -1,5 +1,5 @@
 {
-  "name": "@eyevinn/subtitle-generator",
+  "name": "@eyevinn/auto-subtitles",
   "version": "0.0.1",
   "description": "Automatically generate subtitles from an input audio or video file using Open AI Whisper",
   "scripts": {

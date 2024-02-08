@@ -1,13 +1,13 @@
 version: '3.7'
 networks:
-  subtitle-generator-internal:
+  auto-subtitles-internal:
     driver: bridge
 
 services:
-  subtitle-generator-api:
+  auto-subtitles-api:
     build:
       context: .
-    image: subtitle-generator
+    image: auto-subtitles
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWS_REGION=${AWS_REGION}
@@ -18,4 +18,4 @@ services:
     expose:
       - 8000
     networks:
-      - subtitle-generator-internal
+      - auto-subtitles-internal
