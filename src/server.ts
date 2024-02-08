@@ -3,7 +3,7 @@ import * as dotenv from 'dotenv';
 
 dotenv.config({ path: '.env' });
 
-const server = api({ title: '@eyevinn/subtitle-generator' });
+const server = api({ title: '@eyevinn/auto-subtitles' });
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8000;
 
