@@ -17,7 +17,7 @@
   },
   "author": "Oscar Nord <oscar.nord@eyevinn.se>",
   "dependencies": {
-    "@fastify/cors": "^8.2.0",
+    "@fastify/cors": "^9.0.1",
     "@fastify/swagger": "^8.3.1",
     "@fastify/swagger-ui": "^1.5.0",
     "@fastify/type-provider-typebox": "^2.4.0",
