@@ -23,7 +23,7 @@
     "@fastify/type-provider-typebox": "^2.4.0",
     "@sinclair/typebox": "^0.25.24",
     "nodemon": "^2.0.20",
-    "ts-node": "^10.9.1",
+    "ts-node": "^10.9.2",
     "child_process": "^1.0.2",
     "dotenv": "^16.0.3",
     "fastify": "^4.15.0",
