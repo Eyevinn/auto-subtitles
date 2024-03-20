@@ -27,7 +27,7 @@
     "child_process": "^1.0.2",
     "dotenv": "^16.0.3",
     "fastify": "^4.15.0",
-    "nanoid": "^3.3.2",
+    "nanoid": "^5.0.6",
     "openai": "^4.29.2",
     "@aws-sdk/client-s3": "^3.299.0",
     "aws-sdk": "^2.1581.0",
