@@ -30,7 +30,7 @@
     "nanoid": "^3.3.2",
     "openai": "^4.29.2",
     "@aws-sdk/client-s3": "^3.299.0",
-    "aws-sdk": "^2.1587.0",
+    "aws-sdk": "^2.1611.0",
     "@aws-sdk/lib-storage": "^3.540.0"
   },
   "devDependencies": {
