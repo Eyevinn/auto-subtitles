@@ -99,13 +99,14 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
     async (request, reply) => {
       const worker = transcribeWorker();
       try {
+        const result = await worker.transcribeRemoteFile({
+          source: request.body.url,
+          language: request.body.language,
+          format: request.body.format
+        });
         const resp = {
           workerId: worker.id,
-          result: await worker.transcribeRemoteFile({
-            url: request.body.url,
-            language: request.body.language,
-            format: request.body.format
-          })
+          result
         };
         reply
           .code(200)
@@ -187,7 +188,7 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
       const worker = transcribeWorker();
       try {
         worker.TranscribeRemoteFileS3({
-          url: request.body.url,
+          source: request.body.url,
           language: request.body.language,
           format: request.body.format,
           bucket: request.body.bucket,

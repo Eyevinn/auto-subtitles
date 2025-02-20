@@ -1,11 +1,11 @@
-import { S3Client } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Upload } from '@aws-sdk/lib-storage';
 import { Readable } from 'stream';
 
 export type TContent =
   | string
   | Readable
-  | ReadableStream
   | Blob
   | Uint8Array
   | Buffer
@@ -24,6 +24,13 @@ export type TUploadToS3 = {
   key: string;
   format: TTranscribeFormat;
   region?: string;
+  endpoint?: string;
+};
+
+export type TSignS3Url = {
+  url: URL;
+  region?: string;
+  endpoint?: string;
 };
 
 export async function uploadToS3({
@@ -55,4 +62,23 @@ export async function uploadToS3({
     console.log(`Uploading: ${percent}%`);
   });
   await upload.done();
+}
+
+export async function signUrl({
+  url,
+  region,
+  endpoint
+}: TSignS3Url): Promise<URL> {
+  const customEndpoint = endpoint ?? process.env.AWS_S3_ENDPOINT;
+  const client = new S3Client({
+    region: region ?? process.env.AWS_REGION,
+    forcePathStyle: customEndpoint ? true : false,
+    endpoint: customEndpoint
+  });
+  const command = new GetObjectCommand({
+    Bucket: url.hostname,
+    Key: url.pathname.slice(1)
+  });
+  const signedUrl = await getSignedUrl(client, command, { expiresIn: 3600 });
+  return new URL(signedUrl);
 }

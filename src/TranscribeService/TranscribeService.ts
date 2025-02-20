@@ -2,8 +2,9 @@ import { OpenAI } from 'openai';
 import Configuration from 'openai';
 import { spawn } from 'child_process';
 import { nanoid } from 'nanoid';
-import { uploadToS3 } from '../aws/upload';
+import { signUrl, uploadToS3 } from '../aws/upload';
 import fs from 'fs';
+import { join } from 'path';
 
 export enum State {
   IDLE = 'IDLE',
@@ -24,7 +25,7 @@ export type TTranscribeLocalFile = {
 };
 
 export type TTranscribeRemoteFile = {
-  url: string;
+  source: string;
   language?: string; // language code in ISO 639-1 format
   format?: TTranscribeFormat;
 };
@@ -45,11 +46,14 @@ export class TranscribeService {
 
   private convertToMP3(videoUrl: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const path = `./${nanoid()}.mp3`;
+      const stagingDir = process.env.STAGING_DIR || '/tmp/';
+      const path = join(stagingDir, `./${nanoid()}.mp3`);
+      console.log(`Converting ${videoUrl} to ${path}`);
       const ffmpeg = spawn('ffmpeg', ['-i', videoUrl, '-f', 'mp3', '-']);
       const mp3Stream = fs.createWriteStream(path);
       ffmpeg.stdout.pipe(mp3Stream);
       ffmpeg.on('close', () => {
+        console.log(`Conversion completed and saved to ${path}`);
         resolve(path);
       });
       ffmpeg.on('error', (err) => {
@@ -71,18 +75,31 @@ export class TranscribeService {
     this.workerState = status;
   }
 
+  async createUrl(source: string): Promise<URL> {
+    const url = new URL(source);
+    if (url.protocol === 's3:') {
+      // We need to sign the URL for ffmpeg to be able to access it
+      return await signUrl({ url });
+    }
+    return url;
+  }
+
   async transcribeLocalFile({
     filePath,
     language,
     format
   }: TTranscribeLocalFile): Promise<string> {
     try {
+      const response_format = format ?? 'vtt';
       const resp = await this.openai.audio.transcriptions.create({
         file: fs.createReadStream(filePath),
         model: 'whisper-1',
-        response_format: format ?? 'vtt',
+        response_format,
         language: language ?? 'en'
       });
+      if (!resp.text) {
+        return resp as unknown as string;
+      }
       return resp.text;
     } catch (err) {
       console.error(err);
@@ -91,12 +108,13 @@ export class TranscribeService {
   }
 
   async transcribeRemoteFile({
-    url,
+    source,
     language,
     format
   }: TTranscribeRemoteFile): Promise<string> {
     this.workerState = State.ACTIVE;
-    const filePath = await this.convertToMP3(url);
+    const url = await this.createUrl(source);
+    const filePath = await this.convertToMP3(url.toString());
     const resp = await this.transcribeLocalFile({ filePath, language, format });
     // TODO: Find a way to not be dependent on the need to download the file locally
     // delete local file when done transcribing path is path
@@ -110,7 +128,7 @@ export class TranscribeService {
   }
 
   async TranscribeRemoteFileS3({
-    url,
+    source,
     language,
     format,
     bucket,
@@ -123,7 +141,8 @@ export class TranscribeService {
   }): Promise<void> {
     try {
       this.workerState = State.ACTIVE;
-      const filePath = await this.convertToMP3(url);
+      const url = await this.createUrl(source);
+      const filePath = await this.convertToMP3(url.toString());
       let resp = await this.transcribeLocalFile({ filePath, language, format });
       if (format && ['json', 'verbose_json'].includes(format)) {
         resp = JSON.stringify(resp);
