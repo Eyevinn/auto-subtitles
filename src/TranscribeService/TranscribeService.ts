@@ -133,11 +133,13 @@ export class TranscribeService {
     format,
     bucket,
     key,
-    region
+    region,
+    endpoint
   }: TTranscribeRemoteFile & {
     bucket: string;
     key: string;
     region?: string;
+    endpoint?: string;
   }): Promise<void> {
     try {
       this.workerState = State.ACTIVE;
@@ -155,6 +157,7 @@ export class TranscribeService {
         key,
         format,
         region,
+        endpoint,
         content: JSON.stringify(resp)
       });
       // TODO: Find a way to not be dependent on the need to download the file locally

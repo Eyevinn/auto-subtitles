@@ -157,6 +157,9 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
             },
             region: {
               type: 'string'
+            },
+            endpoint: {
+              type: 'string'
             }
           },
           required: ['url', 'bucket', 'key']
