@@ -197,10 +197,10 @@ export class TranscribeService {
 
   private optimizeSegments(segments: TSegment[]): TSegment[] {
     const optimized: TSegment[] = [];
-    const MIN_DURATION = 1.0; // 1 second
+    const MIN_DURATION = 1.5; // 1.5 second
     const MAX_DURATION = 7.0; // 7 seconds
     const MAX_CHARS_PER_LINE = 42;
-    const CHARS_PER_SECOND = 20;
+    const CHARS_PER_SECOND = 12;
 
     for (const segment of segments) {
       const words = segment.text.split(' ');
