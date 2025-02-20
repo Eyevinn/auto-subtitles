@@ -195,6 +195,112 @@ export class TranscribeService {
       .join('\n');
   }
 
+  private optimizeSegments(segments: TSegment[]): TSegment[] {
+    const optimized: TSegment[] = [];
+    const MIN_DURATION = 1.0; // 1 second
+    const MAX_DURATION = 7.0; // 7 seconds
+    const MAX_CHARS_PER_LINE = 42;
+    const CHARS_PER_SECOND = 20;
+
+    for (const segment of segments) {
+      const words = segment.text.split(' ');
+      let currentLine = '';
+      let lines: string[] = [];
+
+      // Split into lines based on character count
+      for (const word of words) {
+        if ((currentLine + word).length > MAX_CHARS_PER_LINE) {
+          if (currentLine) lines.push(currentLine.trim());
+          currentLine = word + ' ';
+        } else {
+          currentLine += word + ' ';
+        }
+      }
+      if (currentLine) lines.push(currentLine.trim());
+
+      // Limit to 2 lines maximum
+      if (lines.length > 2) {
+        const newLines = this.redistributeLines(lines);
+        lines = newLines.slice(0, 2);
+      }
+
+      const text = lines.join('\n');
+      const duration = segment.end - segment.start;
+
+      // Adjust timing based on text length and reading speed
+      const requiredDuration = text.length / CHARS_PER_SECOND;
+      const newDuration = Math.min(
+        MAX_DURATION,
+        Math.max(MIN_DURATION, requiredDuration)
+      );
+
+      if (duration < newDuration && optimized.length > 0) {
+        // Try to extend previous segment's duration
+        const prev = optimized[optimized.length - 1];
+        const gap = segment.start - prev.end;
+        if (gap < 0.5) {
+          // If segments are close enough
+          prev.end = Math.min(segment.start, prev.start + MAX_DURATION);
+        }
+      }
+
+      optimized.push({
+        start: segment.start,
+        end: Math.min(segment.start + newDuration, segment.end),
+        text
+      });
+    }
+
+    return this.mergeShortSegments(optimized);
+  }
+
+  private redistributeLines(lines: string[]): string[] {
+    const words = lines.join(' ').split(' ');
+    const MAX_CHARS_PER_LINE = 42;
+    const newLines: string[] = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      if ((currentLine + word).length > MAX_CHARS_PER_LINE) {
+        if (currentLine) newLines.push(currentLine.trim());
+        currentLine = word + ' ';
+      } else {
+        currentLine += word + ' ';
+      }
+    }
+    if (currentLine) newLines.push(currentLine.trim());
+    return newLines;
+  }
+
+  private mergeShortSegments(segments: TSegment[]): TSegment[] {
+    const MIN_DURATION = 1.0;
+    const result: TSegment[] = [];
+    let current: TSegment | null = null;
+
+    for (const segment of segments) {
+      if (!current) {
+        current = { ...segment };
+        continue;
+      }
+
+      const currentDuration = current.end - current.start;
+      const nextDuration = segment.end - segment.start;
+      const gap = segment.start - current.end;
+
+      if (currentDuration < MIN_DURATION && gap < 0.3) {
+        // Merge with next segment
+        current.end = segment.end;
+        current.text += '\n' + segment.text;
+      } else {
+        result.push(current);
+        current = { ...segment };
+      }
+    }
+
+    if (current) result.push(current);
+    return result;
+  }
+
   private async transcribe({
     source,
     language,
@@ -224,12 +330,13 @@ export class TranscribeService {
       console.log(`Deleted chunk ${filePath}`);
       currentTime += actualDuration;
     }
+    const optimizedSegments = this.optimizeSegments(allSegments);
     if (format === 'vtt') {
-      return this.formatSegmentsToVTT(allSegments);
+      return this.formatSegmentsToVTT(optimizedSegments);
     } else if (format === 'srt') {
-      return this.formatSegmentsToSRT(allSegments);
+      return this.formatSegmentsToSRT(optimizedSegments);
     } else if (format === 'json') {
-      return JSON.stringify(allSegments);
+      return JSON.stringify(optimizedSegments);
     } else {
       return allSegments.map((segment) => segment.text).join('\n');
     }
