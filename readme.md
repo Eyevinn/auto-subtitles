@@ -9,6 +9,20 @@ Automatically generate subtitles from an input audio or video file using Open AI
 
 </div>
 
+## Features
+
+- Transcribe and translate audio to generate subtitle files (translation limited to English).
+- Split large files into audio chunks to handle 25 MB file size limit and keeps track of timing information.
+- Combines all segments with correct timecodes.
+- Supports different output formats (VTT, SRT, JSON, text)
+- Maintain context and improve continuity between chunks by giving Whisper some context about what was transcribed in the previous chunk.
+- Produce more professional-looking subtitles that are easier to read and follow industry standards for broadcast and streaming platforms:
+  - Characters per line limit for better readability
+  - Appropriate duration based on text length
+  - Natural line breaks at logical points
+  - Minimum duration to ensure readability
+  - Maximum duration to maintain attention
+
 ## Setup
 
 ### Requirements
