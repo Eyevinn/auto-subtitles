@@ -20,6 +20,7 @@ OPENAI_API_KEY=<your-openapi-api-key>
 AWS_REGION=<your-aws-region> (optional can also be provided in payload)
 AWS_ACCESS_KEY_ID=<your-aws-access-key-id> (optional, only needed when uploading to S3)
 AWS_SECRET_ACCESS_KEY=<your-aws-secret-access-key> (optional, only needed when uploading to S3)
+AWS_S3_ENDPOINT=<aws-s3-endpoint> (optional)
 ```
 
 Using an `.env` file is supported. Just rename `.env.example` to `.env` and insert your values.
