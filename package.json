@@ -1,6 +1,6 @@
 {
   "name": "@eyevinn/auto-subtitles",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Automatically generate subtitles from an input audio or video file using Open AI Whisper",
   "scripts": {
     "test": "jest",
