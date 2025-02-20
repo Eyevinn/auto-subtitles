@@ -38,7 +38,8 @@ export async function uploadToS3({
   bucket,
   key,
   format,
-  region
+  region,
+  endpoint
 }: TUploadToS3): Promise<void> {
   let fileFormat = 'txt';
   if (['json', 'verbose_json'].includes(format)) {
@@ -48,7 +49,12 @@ export async function uploadToS3({
   } else if (format === 'vtt') {
     fileFormat = 'vtt';
   }
-  const client = new S3Client({ region: region ?? process.env.AWS_REGION });
+  const customEndpoint = endpoint ?? process.env.AWS_S3_ENDPOINT;
+  const client = new S3Client({
+    region: region ?? process.env.AWS_REGION,
+    forcePathStyle: customEndpoint ? true : false,
+    endpoint: customEndpoint
+  });
   const upload = new Upload({
     client,
     params: { Bucket: bucket, Key: `${key}.${fileFormat}`, Body: content }
