@@ -5,14 +5,14 @@ import { join } from 'path';
 
 const MAX_CHUNK_SIZE = 25 * 1024 * 1024; // 25MB
 
-export async function getAudioDuration(filePath: string) {
+export function getAudioDuration(filePath: string) {
   const output = execSync(
     `ffprobe -i "${filePath}" -show_entries format=duration -v quiet -of csv="p=0"`
   );
   return parseFloat(output.toString().trim());
 }
 
-export async function splitAudioOnSilence(inputFile: string) {
+export function splitAudioOnSilence(inputFile: string) {
   const stagingDir = process.env.STAGING_DIR || '/tmp/';
   const baseOutputFile = join(stagingDir, `${nanoid()}_chunk_%03d.mp3`);
 
@@ -40,7 +40,7 @@ export async function splitAudioOnSilence(inputFile: string) {
         return [inputFile];
       }
       // If no silences found but file is too big, split in equal chunks
-      const duration = await getAudioDuration(inputFile);
+      const duration = getAudioDuration(inputFile);
       const chunks = Math.ceil(stats.size / MAX_CHUNK_SIZE);
       const chunkDuration = duration / chunks;
 

@@ -1,9 +1,9 @@
 import { OpenAI } from 'openai';
 import Configuration from 'openai';
-import { spawn } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { nanoid } from 'nanoid';
 import { signUrl, uploadToS3 } from '../aws/upload';
-import fs, { unlinkSync } from 'fs';
+import fs, { statSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { getAudioDuration, splitAudioOnSilence } from '../audio/chunker';
 
@@ -52,28 +52,26 @@ export class TranscribeService {
     this.openai = new OpenAI({ ...config });
   }
 
-  private convertToMP3(videoUrl: string): Promise<string[]> {
+  private async convertToMP3(videoUrl: string): Promise<string[]> {
     const stagingDir = process.env.STAGING_DIR || '/tmp/';
     const tempFile = join(stagingDir, `${nanoid()}.mp3`);
 
-    return new Promise((resolve, reject) => {
+    try {
       console.log(`Converting ${videoUrl} to ${tempFile}`);
-      const ffmpeg = spawn('ffmpeg', ['-i', videoUrl, '-f', 'mp3', tempFile]);
-      ffmpeg.on('close', async () => {
-        try {
-          console.log(`Conversion compleded. Now splitting into chunks...`);
-          const chunks = await splitAudioOnSilence(tempFile);
-          unlinkSync(tempFile);
-          resolve(chunks);
-        } catch (error) {
-          reject(error);
-        }
-      });
-      ffmpeg.on('error', (err) => {
-        console.error('Error:', err);
-        reject(err);
-      });
-    });
+      execSync(`ffmpeg -i "${videoUrl}" -f mp3 "${tempFile}"`);
+      console.log(`Conversion completed. Now splitting into chunks...`);
+      if (!statSync(tempFile).isFile()) {
+        throw new Error('Error converting video, temp file not found');
+      }
+      const chunks = splitAudioOnSilence(tempFile);
+      console.log(`Splited into ${chunks.length} chunks`);
+      unlinkSync(tempFile);
+      console.log(`Deleted temp file ${tempFile}`);
+      return chunks;
+    } catch (error) {
+      console.error(error);
+      throw new Error('Error converting video');
+    }
   }
 
   get id(): string {
