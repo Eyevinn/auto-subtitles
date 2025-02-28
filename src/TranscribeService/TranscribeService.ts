@@ -52,7 +52,10 @@ export class TranscribeService {
     this.openai = new OpenAI({ ...config });
   }
 
-  private async convertToMP3(videoUrl: string, tempFile: string): Promise<string[]> {
+  private async convertToMP3(
+    videoUrl: string,
+    tempFile: string
+  ): Promise<string[]> {
     try {
       console.log(`Converting ${videoUrl} to ${tempFile}`);
       execSync(`ffmpeg -i "${videoUrl}" -f mp3 "${tempFile}"`);
