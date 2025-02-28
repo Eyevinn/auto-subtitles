@@ -52,10 +52,7 @@ export class TranscribeService {
     this.openai = new OpenAI({ ...config });
   }
 
-  private async convertToMP3(videoUrl: string): Promise<string[]> {
-    const stagingDir = process.env.STAGING_DIR || '/tmp/';
-    const tempFile = join(stagingDir, `${nanoid()}.mp3`);
-
+  private async convertToMP3(videoUrl: string, tempFile: string): Promise<string[]> {
     try {
       console.log(`Converting ${videoUrl} to ${tempFile}`);
       execSync(`ffmpeg -i "${videoUrl}" -f mp3 "${tempFile}"`);
@@ -64,9 +61,7 @@ export class TranscribeService {
         throw new Error('Error converting video, temp file not found');
       }
       const chunks = splitAudioOnSilence(tempFile);
-      console.log(`Splited into ${chunks.length} chunks`);
-      unlinkSync(tempFile);
-      console.log(`Deleted temp file ${tempFile}`);
+      console.log(`Splitted into ${chunks.length} chunks`);
       return chunks;
     } catch (error) {
       console.error(error);
@@ -304,13 +299,15 @@ export class TranscribeService {
     language,
     format
   }: TTranscribeRemoteFile): Promise<string> {
+    const stagingDir = process.env.STAGING_DIR || '/tmp/';
+    const tempFile = join(stagingDir, `${nanoid()}.mp3`);
     const url = await this.createUrl(source);
-    const filePaths = await this.convertToMP3(url.toString());
+    const filePaths = await this.convertToMP3(url.toString(), tempFile);
     const allSegments: TSegment[] = [];
 
     let currentTime = 0;
     for (const filePath of filePaths) {
-      const actualDuration = await getAudioDuration(filePath);
+      const actualDuration = getAudioDuration(filePath);
       const chunkTranscription = await this.transcribeLocalFile({
         filePath,
         language,
@@ -327,6 +324,10 @@ export class TranscribeService {
       unlinkSync(filePath);
       console.log(`Deleted chunk ${filePath}`);
       currentTime += actualDuration;
+    }
+    if (fs.existsSync(tempFile)) {
+      unlinkSync(tempFile);
+      console.log(`Deleted temp file ${tempFile}`);
     }
     const optimizedSegments = this.optimizeSegments(allSegments);
     if (format === 'vtt') {
