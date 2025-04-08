@@ -309,7 +309,7 @@ export class TranscribeService {
     const allSegments: TSegment[] = [];
 
     let currentTime = 0;
-    for (const filePath of filePaths) {
+    for await (const filePath of filePaths) {
       const actualDuration = getAudioDuration(filePath);
       const chunkTranscription = await this.transcribeLocalFile({
         filePath,
