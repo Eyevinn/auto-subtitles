@@ -310,6 +310,7 @@ export class TranscribeService {
 
     let currentTime = 0;
     for await (const filePath of filePaths) {
+      console.log(`Processing chunk ${filePath}`);
       const actualDuration = getAudioDuration(filePath);
       const chunkTranscription = await this.transcribeLocalFile({
         filePath,
@@ -317,13 +318,16 @@ export class TranscribeService {
         format: 'vtt',
         prompt: allSegments[allSegments.length - 1]?.text
       });
+      console.log(`Transcription completed for chunk ${filePath}`);
       const segments = this.parseVTTToSegments(chunkTranscription);
+      console.log(`Adjusting timecodes for chunk ${filePath}`);
       const adjustedSegments = this.adjustSegmentTimecodes(
         segments,
         currentTime
       );
       allSegments.push(...adjustedSegments);
 
+      console.log(`Deleting chunk ${filePath}`);
       unlinkSync(filePath);
       console.log(`Deleted chunk ${filePath}`);
       currentTime += actualDuration;
@@ -332,6 +336,7 @@ export class TranscribeService {
       unlinkSync(tempFile);
       console.log(`Deleted temp file ${tempFile}`);
     }
+    console.log(`Optimizing segments...`);
     const optimizedSegments = this.optimizeSegments(allSegments);
     if (format === 'vtt') {
       return this.formatSegmentsToVTT(optimizedSegments);
