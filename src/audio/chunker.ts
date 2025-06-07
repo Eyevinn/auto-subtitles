@@ -33,6 +33,14 @@ export function splitAudioOnSilence(inputFile: string) {
       })
       .filter((time): time is number => time !== null);
 
+    // Silence in the end should be ignored
+    if (
+      silences.length > 0 &&
+      silences[silences.length - 1] > getAudioDuration(inputFile) - 2
+    ) {
+      console.log('Ignoring silence at the end of the audio file');
+      silences.pop();
+    }
     // If no silences found or file is small enough, return original file
     if (silences.length === 0) {
       const stats = statSync(inputFile);
