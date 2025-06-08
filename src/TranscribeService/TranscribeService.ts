@@ -1,12 +1,13 @@
 import { OpenAI } from 'openai';
 import Configuration from 'openai';
-import { execSync, spawn } from 'child_process';
+import { execSync } from 'child_process';
 import { nanoid } from 'nanoid';
 import { signUrl, uploadToS3 } from '../aws/upload';
 import fs, { statSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { getAudioDuration, splitAudioOnSilence } from '../audio/chunker';
 
+export type TEvent = 'subtitling_started' | 'subtitling_completed' | 'error';
 export enum State {
   IDLE = 'IDLE',
   ACTIVE = 'ACTIVE',
@@ -21,6 +22,7 @@ export type TTranscribeLocalFile = {
   language?: string; // language code in ISO 639-1 format
   prompt?: string;
   model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
+  callbackUrl?: URL; // Optional callback URL to send events to
 };
 
 export type TTranscribeRemoteFile = {
@@ -28,6 +30,16 @@ export type TTranscribeRemoteFile = {
   language?: string; // language code in ISO 639-1 format
   format?: TTranscribeFormat;
   model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
+  callbackUrl?: URL; // Optional callback URL to send events to
+};
+
+export type TTranscribeParams = {
+  jobId: string; // Unique job ID for tracking
+  source: string;
+  language?: string; // language code in ISO 639-1 format
+  format?: TTranscribeFormat;
+  model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
+  callbackUrl?: URL; // Optional callback URL to send events to
 };
 
 type TSegment = {
@@ -293,15 +305,51 @@ export class TranscribeService {
     return result;
   }
 
+  private async postCallbackEvent(
+    eventType: TEvent,
+    jobId: string,
+    callbackUrl?: URL
+  ) {
+    if (!callbackUrl) {
+      return;
+    }
+    try {
+      const response = await fetch(callbackUrl.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          event: eventType,
+          jobId,
+          workerId: this.id,
+          timestamp: new Date().toISOString()
+        })
+      });
+      if (!response.ok) {
+        console.warn(
+          `Callback to ${callbackUrl} failed with status ${response.status}`
+        );
+      } else {
+        console.log(`Event ${eventType} sent to ${callbackUrl}`);
+      }
+    } catch (err) {
+      console.warn('Failed to send event', err);
+    }
+  }
+
   private async transcribe({
+    jobId,
     source,
     language,
     format,
-    model
-  }: TTranscribeRemoteFile): Promise<string> {
+    model,
+    callbackUrl
+  }: TTranscribeParams): Promise<string> {
     const stagingDir = process.env.STAGING_DIR || '/tmp/';
-    const tempFile = join(stagingDir, `${nanoid()}.mp3`);
+    const tempFile = join(stagingDir, `${jobId}.mp3`);
     const url = await this.createUrl(source);
+    await this.postCallbackEvent('subtitling_started', jobId, callbackUrl);
     const filePaths = await this.convertToMP3(url.toString(), tempFile);
     const allSegments: TSegment[] = [];
 
@@ -348,19 +396,25 @@ export class TranscribeService {
     source,
     language,
     format,
-    model
+    model,
+    callbackUrl
   }: TTranscribeRemoteFile): Promise<string> {
     this.workerState = State.ACTIVE;
+    const jobId = nanoid();
+
     if (!format) {
       format = 'vtt';
     }
 
     const fullTranscription = await this.transcribe({
+      jobId,
       source,
       language,
       format,
-      model
+      model,
+      callbackUrl
     });
+    await this.postCallbackEvent('subtitling_completed', jobId, callbackUrl);
     this.workerState = State.INACTIVE;
 
     if (format && ['json', 'verbose_json'].includes(format)) {
@@ -377,23 +431,27 @@ export class TranscribeService {
     bucket,
     key,
     region,
-    endpoint
+    endpoint,
+    callbackUrl
   }: TTranscribeRemoteFile & {
     bucket: string;
     key: string;
     region?: string;
     endpoint?: string;
   }): Promise<void> {
+    const jobId = nanoid();
     try {
       this.workerState = State.ACTIVE;
       if (!format) {
         format = 'vtt';
       }
       const fullTranscription = await this.transcribe({
+        jobId,
         source,
         language,
         format,
-        model
+        model,
+        callbackUrl
       });
 
       let resp = fullTranscription;
@@ -408,9 +466,11 @@ export class TranscribeService {
         endpoint,
         content: resp
       });
+      await this.postCallbackEvent('subtitling_completed', jobId, callbackUrl);
       this.workerState = State.INACTIVE;
     } catch (err) {
       console.error(err);
+      await this.postCallbackEvent('error', jobId, callbackUrl);
       this.workerState = State.INACTIVE;
     }
   }
