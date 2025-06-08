@@ -51,7 +51,13 @@ export async function uploadToS3({
   }
   const customEndpoint = endpoint ?? process.env.AWS_S3_ENDPOINT;
   const client = new S3Client({
-    region: region ?? process.env.AWS_REGION,
+    region:
+      region ??
+      (process.env.AWS_REGION
+        ? process.env.AWS_REGION
+        : customEndpoint
+        ? 'custom'
+        : undefined),
     forcePathStyle: customEndpoint ? true : false,
     endpoint: customEndpoint
   });
@@ -77,7 +83,13 @@ export async function signUrl({
 }: TSignS3Url): Promise<URL> {
   const customEndpoint = endpoint ?? process.env.AWS_S3_ENDPOINT;
   const client = new S3Client({
-    region: region ?? process.env.AWS_REGION,
+    region:
+      region ??
+      (process.env.AWS_REGION
+        ? process.env.AWS_REGION
+        : customEndpoint
+        ? 'custom'
+        : undefined),
     forcePathStyle: customEndpoint ? true : false,
     endpoint: customEndpoint
   });
