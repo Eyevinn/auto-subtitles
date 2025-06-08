@@ -53,6 +53,7 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
       url: string;
       language?: string;
       format?: TTranscribeFormat;
+      callbackUrl?: string;
     };
   }>(
     '/transcribe',
@@ -63,6 +64,9 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
           type: 'object',
           properties: {
             url: {
+              type: 'string'
+            },
+            callbackUrl: {
               type: 'string'
             },
             language: {
@@ -107,7 +111,10 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
         const result = await worker.transcribeRemoteFile({
           source: request.body.url,
           language: request.body.language,
-          format: request.body.format
+          format: request.body.format,
+          callbackUrl: request.body.callbackUrl
+            ? new URL(request.body.callbackUrl)
+            : undefined
         });
         const resp = {
           workerId: worker.id,
@@ -131,6 +138,7 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
   fastify.post<{
     Body: {
       url: string;
+      callbackUrl?: string;
       language?: string;
       bucket: string;
       key: string;
@@ -146,6 +154,9 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
           type: 'object',
           properties: {
             url: {
+              type: 'string'
+            },
+            callbackUrl: {
               type: 'string'
             },
             language: {
@@ -198,6 +209,9 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
       try {
         worker.TranscribeRemoteFileS3({
           source: request.body.url,
+          callbackUrl: request.body.callbackUrl
+            ? new URL(request.body.callbackUrl)
+            : undefined,
           language: request.body.language,
           format: request.body.format,
           bucket: request.body.bucket,
