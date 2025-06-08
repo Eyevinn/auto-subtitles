@@ -49,7 +49,11 @@ const healthcheck: FastifyPluginCallback<Options> = (fastify, opts, next) => {
 };
 const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
   fastify.post<{
-    Body: { url: string; language?: string; format?: TTranscribeFormat };
+    Body: {
+      url: string;
+      language?: string;
+      format?: TTranscribeFormat;
+    };
   }>(
     '/transcribe',
     {
@@ -65,7 +69,8 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
               type: 'string' // language code in ISO 639-1 format (default: en)
             },
             format: {
-              type: 'string' // json, text, srt, verbose_json, vtt (default)
+              type: 'string', // srt or vtt (default)
+              enum: ['srt', 'vtt']
             }
           },
           required: ['url']
@@ -147,7 +152,8 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
               type: 'string' // language code in ISO 639-1 format (default: en)
             },
             format: {
-              type: 'string' // json, text, srt, verbose_json, vtt (default)
+              type: 'string', // srt or vtt (default)
+              enum: ['srt', 'vtt']
             },
             bucket: {
               type: 'string'

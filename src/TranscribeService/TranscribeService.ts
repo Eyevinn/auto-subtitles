@@ -12,24 +12,22 @@ export enum State {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE'
 }
-export type TTranscribeFormat =
-  | 'json'
-  | 'text'
-  | 'srt'
-  | 'verbose_json'
-  | 'vtt';
+export type TTranscribeFormat = 'srt' | 'vtt';
+
+export type TTranscribeModel = 'whisper-1';
 
 export type TTranscribeLocalFile = {
   filePath: string;
   language?: string; // language code in ISO 639-1 format
-  format?: TTranscribeFormat;
   prompt?: string;
+  model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
 };
 
 export type TTranscribeRemoteFile = {
   source: string;
   language?: string; // language code in ISO 639-1 format
   format?: TTranscribeFormat;
+  model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
 };
 
 type TSegment = {
@@ -96,22 +94,20 @@ export class TranscribeService {
   async transcribeLocalFile({
     filePath,
     language,
-    format,
-    prompt
-  }: TTranscribeLocalFile): Promise<string> {
+    prompt,
+    model
+  }: TTranscribeLocalFile): Promise<TSegment[]> {
     try {
-      const response_format = format ?? 'vtt';
       const resp = await this.openai.audio.transcriptions.create({
         file: fs.createReadStream(filePath),
-        model: 'whisper-1',
-        response_format,
+        model: model ?? 'whisper-1',
+        response_format: 'vtt',
         language: language ?? 'en',
         prompt: prompt ?? undefined
       });
-      if (!resp.text) {
-        return resp as unknown as string;
-      }
-      return resp.text;
+      console.log(`Transcription completed for chunk ${filePath}`);
+      const segments = this.parseVTTToSegments(resp);
+      return segments;
     } catch (err) {
       console.error(err);
       throw err;
@@ -300,7 +296,8 @@ export class TranscribeService {
   private async transcribe({
     source,
     language,
-    format
+    format,
+    model
   }: TTranscribeRemoteFile): Promise<string> {
     const stagingDir = process.env.STAGING_DIR || '/tmp/';
     const tempFile = join(stagingDir, `${nanoid()}.mp3`);
@@ -312,14 +309,12 @@ export class TranscribeService {
     for await (const filePath of filePaths) {
       console.log(`Processing chunk ${filePath}`);
       const actualDuration = getAudioDuration(filePath);
-      const chunkTranscription = await this.transcribeLocalFile({
+      const segments = await this.transcribeLocalFile({
         filePath,
         language,
-        format: 'vtt',
-        prompt: allSegments[allSegments.length - 1]?.text
+        prompt: allSegments[allSegments.length - 1]?.text,
+        model
       });
-      console.log(`Transcription completed for chunk ${filePath}`);
-      const segments = this.parseVTTToSegments(chunkTranscription);
       console.log(`Adjusting timecodes for chunk ${filePath}`);
       const adjustedSegments = this.adjustSegmentTimecodes(
         segments,
@@ -352,13 +347,19 @@ export class TranscribeService {
   async transcribeRemoteFile({
     source,
     language,
-    format
+    format,
+    model
   }: TTranscribeRemoteFile): Promise<string> {
     this.workerState = State.ACTIVE;
+    if (!format) {
+      format = 'vtt';
+    }
+
     const fullTranscription = await this.transcribe({
       source,
       language,
-      format
+      format,
+      model
     });
     this.workerState = State.INACTIVE;
 
@@ -372,6 +373,7 @@ export class TranscribeService {
     source,
     language,
     format,
+    model,
     bucket,
     key,
     region,
@@ -384,18 +386,19 @@ export class TranscribeService {
   }): Promise<void> {
     try {
       this.workerState = State.ACTIVE;
+      if (!format) {
+        format = 'vtt';
+      }
       const fullTranscription = await this.transcribe({
         source,
         language,
-        format
+        format,
+        model
       });
 
       let resp = fullTranscription;
       if (format && ['json', 'verbose_json'].includes(format)) {
         resp = JSON.stringify(fullTranscription);
-      }
-      if (!format) {
-        format = 'vtt';
       }
       uploadToS3({
         bucket,
