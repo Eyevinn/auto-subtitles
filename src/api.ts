@@ -54,6 +54,7 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
       language?: string;
       format?: TTranscribeFormat;
       callbackUrl?: string;
+      externalId?: string; // Optional external ID for tracking
     };
   }>(
     '/transcribe',
@@ -67,7 +68,13 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
               type: 'string'
             },
             callbackUrl: {
-              type: 'string'
+              type: 'string',
+              description: 'Optional callback URL to receive subtitling status'
+            },
+            externalId: {
+              type: 'string', // Optional external ID for tracking
+              description:
+                'Optional external ID for tracking the subtitling job'
             },
             language: {
               type: 'string' // language code in ISO 639-1 format (default: en)
@@ -114,7 +121,8 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
           format: request.body.format,
           callbackUrl: request.body.callbackUrl
             ? new URL(request.body.callbackUrl)
-            : undefined
+            : undefined,
+          externalId: request.body.externalId
         });
         const resp = {
           workerId: worker.id,
@@ -139,6 +147,7 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
     Body: {
       url: string;
       callbackUrl?: string;
+      externalId?: string; // Optional external ID for tracking
       language?: string;
       bucket: string;
       key: string;
@@ -158,6 +167,11 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
             },
             callbackUrl: {
               type: 'string'
+            },
+            externalId: {
+              type: 'string', // Optional external ID for tracking
+              description:
+                'Optional external ID for tracking the subtitling job'
             },
             language: {
               type: 'string' // language code in ISO 639-1 format (default: en)
@@ -212,6 +226,7 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
           callbackUrl: request.body.callbackUrl
             ? new URL(request.body.callbackUrl)
             : undefined,
+          externalId: request.body.externalId,
           language: request.body.language,
           format: request.body.format,
           bucket: request.body.bucket,

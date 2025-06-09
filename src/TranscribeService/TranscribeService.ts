@@ -23,6 +23,7 @@ export type TTranscribeLocalFile = {
   prompt?: string;
   model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
   callbackUrl?: URL; // Optional callback URL to send events to
+  externalId?: string; // Optional external ID for tracking
 };
 
 export type TTranscribeRemoteFile = {
@@ -31,6 +32,7 @@ export type TTranscribeRemoteFile = {
   format?: TTranscribeFormat;
   model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
   callbackUrl?: URL; // Optional callback URL to send events to
+  externalId?: string; // Optional external ID for tracking
 };
 
 export type TTranscribeParams = {
@@ -40,6 +42,7 @@ export type TTranscribeParams = {
   format?: TTranscribeFormat;
   model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
   callbackUrl?: URL; // Optional callback URL to send events to
+  externalId?: string; // Optional external ID for tracking
 };
 
 type TSegment = {
@@ -308,7 +311,8 @@ export class TranscribeService {
   private async postCallbackEvent(
     eventType: TEvent,
     jobId: string,
-    callbackUrl?: URL
+    callbackUrl?: URL,
+    externalId?: string
   ) {
     if (!callbackUrl) {
       return;
@@ -323,7 +327,8 @@ export class TranscribeService {
           event: eventType,
           jobId,
           workerId: this.id,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          externalId
         })
       });
       if (!response.ok) {
@@ -344,12 +349,18 @@ export class TranscribeService {
     language,
     format,
     model,
-    callbackUrl
+    callbackUrl,
+    externalId
   }: TTranscribeParams): Promise<string> {
     const stagingDir = process.env.STAGING_DIR || '/tmp/';
     const tempFile = join(stagingDir, `${jobId}.mp3`);
     const url = await this.createUrl(source);
-    await this.postCallbackEvent('subtitling_started', jobId, callbackUrl);
+    await this.postCallbackEvent(
+      'subtitling_started',
+      jobId,
+      callbackUrl,
+      externalId
+    );
     const filePaths = await this.convertToMP3(url.toString(), tempFile);
     const allSegments: TSegment[] = [];
 
@@ -397,7 +408,8 @@ export class TranscribeService {
     language,
     format,
     model,
-    callbackUrl
+    callbackUrl,
+    externalId
   }: TTranscribeRemoteFile): Promise<string> {
     this.workerState = State.ACTIVE;
     const jobId = nanoid();
@@ -412,9 +424,15 @@ export class TranscribeService {
       language,
       format,
       model,
-      callbackUrl
+      callbackUrl,
+      externalId
     });
-    await this.postCallbackEvent('subtitling_completed', jobId, callbackUrl);
+    await this.postCallbackEvent(
+      'subtitling_completed',
+      jobId,
+      callbackUrl,
+      externalId
+    );
     this.workerState = State.INACTIVE;
 
     if (format && ['json', 'verbose_json'].includes(format)) {
@@ -432,7 +450,8 @@ export class TranscribeService {
     key,
     region,
     endpoint,
-    callbackUrl
+    callbackUrl,
+    externalId
   }: TTranscribeRemoteFile & {
     bucket: string;
     key: string;
@@ -451,7 +470,8 @@ export class TranscribeService {
         language,
         format,
         model,
-        callbackUrl
+        callbackUrl,
+        externalId
       });
 
       let resp = fullTranscription;
@@ -466,11 +486,16 @@ export class TranscribeService {
         endpoint,
         content: resp
       });
-      await this.postCallbackEvent('subtitling_completed', jobId, callbackUrl);
+      await this.postCallbackEvent(
+        'subtitling_completed',
+        jobId,
+        callbackUrl,
+        externalId
+      );
       this.workerState = State.INACTIVE;
     } catch (err) {
       console.error(err);
-      await this.postCallbackEvent('error', jobId, callbackUrl);
+      await this.postCallbackEvent('error', jobId, callbackUrl, externalId);
       this.workerState = State.INACTIVE;
     }
   }
