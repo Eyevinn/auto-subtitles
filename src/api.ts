@@ -55,6 +55,7 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
       format?: TTranscribeFormat;
       callbackUrl?: string;
       externalId?: string; // Optional external ID for tracking
+      prompt?: string;
     };
   }>(
     '/transcribe',
@@ -78,6 +79,11 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
             },
             language: {
               type: 'string' // language code in ISO 639-1 format (default: en)
+            },
+            prompt: {
+              type: 'string',
+              description:
+                'Optional prompt to guide the transcription process. This can be used to provide context or specific instructions for the transcription.'
             },
             format: {
               type: 'string', // srt or vtt (default)
@@ -118,6 +124,7 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
         const result = await worker.transcribeRemoteFile({
           source: request.body.url,
           language: request.body.language,
+          prompt: request.body.prompt,
           format: request.body.format,
           callbackUrl: request.body.callbackUrl
             ? new URL(request.body.callbackUrl)
@@ -153,6 +160,7 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
       key: string;
       region?: string;
       format?: TTranscribeFormat;
+      prompt?: string;
     };
   }>(
     '/transcribe/s3',
@@ -175,6 +183,11 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
             },
             language: {
               type: 'string' // language code in ISO 639-1 format (default: en)
+            },
+            prompt: {
+              type: 'string',
+              description:
+                'Optional prompt to guide the transcription process. This can be used to provide context or specific instructions for the transcription.'
             },
             format: {
               type: 'string', // srt or vtt (default)
@@ -228,6 +241,7 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
             : undefined,
           externalId: request.body.externalId,
           language: request.body.language,
+          prompt: request.body.prompt,
           format: request.body.format,
           bucket: request.body.bucket,
           key: request.body.key,

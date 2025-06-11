@@ -21,6 +21,7 @@ export type TTranscribeLocalFile = {
   filePath: string;
   language?: string; // language code in ISO 639-1 format
   prompt?: string;
+  postProcessingPrompt?: string; // Optional prompt to guide transcription
   model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
   callbackUrl?: URL; // Optional callback URL to send events to
   externalId?: string; // Optional external ID for tracking
@@ -33,12 +34,14 @@ export type TTranscribeRemoteFile = {
   model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
   callbackUrl?: URL; // Optional callback URL to send events to
   externalId?: string; // Optional external ID for tracking
+  prompt?: string; // Optional prompt to guide transcription
 };
 
 export type TTranscribeParams = {
   jobId: string; // Unique job ID for tracking
   source: string;
   language?: string; // language code in ISO 639-1 format
+  postProcessingPrompt?: string; // Optional prompt to guide transcription
   format?: TTranscribeFormat;
   model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
   callbackUrl?: URL; // Optional callback URL to send events to
@@ -110,6 +113,7 @@ export class TranscribeService {
     filePath,
     language,
     prompt,
+    postProcessingPrompt,
     model
   }: TTranscribeLocalFile): Promise<TSegment[]> {
     try {
@@ -121,7 +125,31 @@ export class TranscribeService {
         prompt: prompt ?? undefined
       });
       console.log(`Transcription completed for chunk ${filePath}`);
-      const segments = this.parseVTTToSegments(resp);
+      let processedText = resp;
+      if (postProcessingPrompt) {
+        console.log(
+          `Applying post-processing prompt to transcription for chunk ${filePath}`
+        );
+        const postProcessingResponse =
+          await this.openai.chat.completions.create({
+            model: 'gpt-4.1',
+            messages: [
+              {
+                role: 'system',
+                content:
+                  'You are a helpful assistant. Your task is to process the VTT formatted text and make adjustment based on the context provided. Expected output is a VTT formatted text with proper timecodes and text segments.'
+              },
+              {
+                role: 'user',
+                content: postProcessingPrompt + '\n\n' + resp
+              }
+            ]
+          });
+        if (postProcessingResponse.choices[0].message.content) {
+          processedText = postProcessingResponse.choices[0].message.content;
+        }
+      }
+      const segments = this.parseVTTToSegments(processedText);
       return segments;
     } catch (err) {
       console.error(err);
@@ -349,6 +377,7 @@ export class TranscribeService {
     language,
     format,
     model,
+    postProcessingPrompt,
     callbackUrl,
     externalId
   }: TTranscribeParams): Promise<string> {
@@ -372,6 +401,7 @@ export class TranscribeService {
         filePath,
         language,
         prompt: allSegments[allSegments.length - 1]?.text,
+        postProcessingPrompt,
         model
       });
       console.log(`Adjusting timecodes for chunk ${filePath}`);
@@ -407,6 +437,7 @@ export class TranscribeService {
     source,
     language,
     format,
+    prompt,
     model,
     callbackUrl,
     externalId
@@ -423,6 +454,7 @@ export class TranscribeService {
       source,
       language,
       format,
+      postProcessingPrompt: prompt,
       model,
       callbackUrl,
       externalId
@@ -446,6 +478,7 @@ export class TranscribeService {
     language,
     format,
     model,
+    prompt,
     bucket,
     key,
     region,
@@ -469,6 +502,7 @@ export class TranscribeService {
         source,
         language,
         format,
+        postProcessingPrompt: prompt,
         model,
         callbackUrl,
         externalId
