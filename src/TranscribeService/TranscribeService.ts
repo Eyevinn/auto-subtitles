@@ -6,6 +6,7 @@ import { signUrl, uploadToS3 } from '../aws/upload';
 import fs, { statSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { getAudioDuration, splitAudioOnSilence } from '../audio/chunker';
+import { TranscriptionVerbose } from 'openai/resources/audio/transcriptions';
 
 export type TEvent = 'subtitling_started' | 'subtitling_completed' | 'error';
 export enum State {
@@ -117,6 +118,15 @@ export class TranscribeService {
     model
   }: TTranscribeLocalFile): Promise<TSegment[]> {
     try {
+      const transcription = await this.openai.audio.transcriptions.create({
+        file: fs.createReadStream(filePath),
+        model: model ?? 'whisper-1',
+        response_format: 'verbose_json',
+        language: language ?? 'en',
+        prompt: prompt ?? undefined,
+        timestamp_granularities: ['word']
+      });
+
       const resp = await this.openai.audio.transcriptions.create({
         file: fs.createReadStream(filePath),
         model: model ?? 'whisper-1',
@@ -149,7 +159,7 @@ export class TranscribeService {
           processedText = postProcessingResponse.choices[0].message.content;
         }
       }
-      const segments = this.parseVTTToSegments(processedText);
+      const segments = this.parseVTTToSegments(processedText, transcription);
       return segments;
     } catch (err) {
       console.error(err);
@@ -157,7 +167,10 @@ export class TranscribeService {
     }
   }
 
-  private parseVTTToSegments(vtt: string): TSegment[] {
+  private parseVTTToSegments(
+    vtt: string,
+    transcription: TranscriptionVerbose
+  ): TSegment[] {
     const lines = vtt.split('\n');
     const segments: TSegment[] = [];
     let currentSegment: Partial<TSegment> = {};
@@ -174,6 +187,29 @@ export class TranscribeService {
         currentSegment.text = line.trim();
         segments.push(currentSegment as TSegment);
         currentSegment = {};
+      }
+    }
+    for (const segment of segments) {
+      // Find words within the segment
+      const words = transcription.words?.filter((word) => {
+        return word.start >= segment.start && word.end <= segment.end;
+      });
+      if (words && words.length > 0) {
+        // Update segment start time to the first word's start time
+        const wordIndex = words.findIndex(
+          (word) => word.word === segment.text.split(' ')[0]
+        );
+        if (wordIndex !== -1) {
+          if (wordIndex < words.length - 1 && words[wordIndex + 1]) {
+            // Also check next word for better accuracy
+            const secondWord = segment.text.split(' ')[1];
+            if (secondWord && secondWord === words[wordIndex + 1].word) {
+              segment.start = words[wordIndex].start;
+            }
+          }
+        } else {
+          segment.start = words[0].start;
+        }
       }
     }
     return segments;
@@ -304,6 +340,10 @@ export class TranscribeService {
       }
     }
     if (currentLine) newLines.push(currentLine.trim());
+    if (newLines.length > 2) {
+      // If we still have more than 2 lines, we need to join the last lines to the second last line
+      newLines[newLines.length - 2] += ' ' + newLines.pop();
+    }
     return newLines;
   }
 
