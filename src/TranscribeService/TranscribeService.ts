@@ -340,6 +340,10 @@ export class TranscribeService {
       }
     }
     if (currentLine) newLines.push(currentLine.trim());
+    if (newLines.length > 2) {
+      // If we still have more than 2 lines, we need to join the last lines to the second last line
+      newLines[newLines.length - 2] += ' ' + newLines.pop();
+    }
     return newLines;
   }
 
