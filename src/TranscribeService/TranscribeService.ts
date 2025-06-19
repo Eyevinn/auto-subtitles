@@ -167,7 +167,7 @@ export class TranscribeService {
                 {
                   role: 'system',
                   content:
-                    'You are a helpful assistant. Your task is to process the JSON and make adjustment based on the context provided. Expected output is a JSON with the same structure.'
+                    'You are a helpful assistant. Your task is to process the JSON and make adjustment based on the context provided. Do not make any adjustments to timing. Expected output is only a JSON with the same structure. Do not give any additional information or explanations.'
                 },
                 {
                   role: 'user',
@@ -185,7 +185,6 @@ export class TranscribeService {
               const cleanedContent =
                 postProcessingTranscription.choices[0].message.content
                   .replace(/```json\s*|\s*```/g, '')
-                  .replace(/^\s*[^\s[{].*$/gm, '')
                   .trim();
               postProcessingTranscription.choices[0].message.content =
                 cleanedContent;
@@ -230,20 +229,32 @@ export class TranscribeService {
         currentSegment.end = end;
       } else if (line.trim() && currentSegment.start !== undefined) {
         currentSegment.text = line.trim();
-        segments.push(currentSegment as TSegment);
-        currentSegment = {};
+        if (!isNaN(currentSegment.start)) {
+          segments.push(currentSegment as TSegment);
+          currentSegment = {};
+        } else {
+          console.warn(
+            `Segment start time is NaN for line: "${line.trim()}", skipping segment.`
+          );
+        }
       }
     }
+    let intervalStart = segments[0]?.start ?? 0;
     for (const segment of segments) {
+      if (segment.start < intervalStart) {
+        const diff = intervalStart - segment.start;
+        segment.start = intervalStart;
+        segment.end += diff;
+      }
       // Find words within the segment
       const words = transcription.words?.filter((word) => {
-        return word.start >= segment.start && word.end <= segment.end;
+        return word.start >= intervalStart && word.end <= intervalStart + 15;
       });
       if (words && words.length > 0) {
         // Update segment start time to the first word's start time
         const segmentWords = segment.text.split(' ');
         const wordIndex = words.findIndex(
-          (word) => word.word === segmentWords[0]
+          (word) => word.word === segmentWords[0].replace(/[,!?]/g, '')
         );
         if (wordIndex !== -1) {
           let j = 0;
@@ -251,19 +262,40 @@ export class TranscribeService {
           for (let i = wordIndex; i < words.length - 1; i++) {
             if (segmentWords[j + 1] === words[i + 1].word) {
               numMatchedWords++;
+            } else {
+              break;
             }
             j++;
           }
           if (numMatchedWords > 2) {
+            const diff = words[wordIndex].start - segment.start;
             segment.start = words[wordIndex].start;
+            segment.end += diff;
             console.log(
-              `Adjusted segment start time to ${segment.start} for text: "${segment.text}"`
+              `Adjusted segment start time to ${segment.start} and end time to ${segment.end} for text: "${segment.text}"`
+            );
+          } else {
+            console.log(
+              `Only ${numMatchedWords} words matched, not adjusting start time. Keep original start time ${segment.start} and end time ${segment.end} for "${segment.text}".`
             );
           }
         } else {
-          segment.start = words[0].start;
+          console.warn(
+            `First word of "${segment.text}" not found in words, keep original start time ${segment.start} and end time ${segment.end}.`
+          );
         }
+      } else {
+        console.warn(
+          `No words found for segment with text: "${segment.text}" between ${segment.start} and ${segment.end}. Using first word start time.`
+        );
+        const diff = transcription.words?.[0]?.start ?? 0 - segment.start;
+        segment.start = transcription.words?.[0]?.start ?? segment.start;
+        segment.end += diff;
+        console.log(
+          `Adjusted segment start time to ${segment.start} and end time to ${segment.end} for text: "${segment.text}"`
+        );
       }
+      intervalStart = segment.end;
     }
     return segments;
   }
