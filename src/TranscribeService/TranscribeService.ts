@@ -254,13 +254,21 @@ export class TranscribeService {
         // Update segment start time to the first word's start time
         const segmentWords = segment.text.split(' ');
         const wordIndex = words.findIndex(
-          (word) => word.word === segmentWords[0].replace(/[,!?]/g, '')
+          (word) =>
+            word.word.toLowerCase() ===
+            segmentWords[0].replace(/[,!?]/g, '').toLowerCase()
         );
         if (wordIndex !== -1) {
           let j = 0;
           let numMatchedWords = 1;
           for (let i = wordIndex; i < words.length - 1; i++) {
-            if (segmentWords[j + 1] === words[i + 1].word) {
+            if (!segmentWords[j + 1]) {
+              break; // No more segment words to match
+            }
+            if (
+              segmentWords[j + 1].replace(/[,!?]/g, '').toLowerCase() ===
+              words[i + 1].word.replace(/[,!?]/g, '').toLowerCase()
+            ) {
               numMatchedWords++;
             } else {
               break;
@@ -272,7 +280,14 @@ export class TranscribeService {
             segment.start = words[wordIndex].start;
             segment.end += diff;
             console.log(
-              `Adjusted segment start time to ${segment.start} and end time to ${segment.end} for text: "${segment.text}"`
+              `Matched with "${words
+                .slice(wordIndex, wordIndex + numMatchedWords)
+                .map((w) => w.word)
+                .join(' ')}". Adjusted segment start time to ${
+                segment.start
+              } and end time to ${segment.end} for text: "${segmentWords
+                .slice(0, numMatchedWords)
+                .join(' ')}"`
             );
           } else {
             console.log(
@@ -288,12 +303,22 @@ export class TranscribeService {
         console.warn(
           `No words found for segment with text: "${segment.text}" between ${segment.start} and ${segment.end}. Using first word start time.`
         );
-        const diff = transcription.words?.[0]?.start ?? 0 - segment.start;
-        segment.start = transcription.words?.[0]?.start ?? segment.start;
-        segment.end += diff;
-        console.log(
-          `Adjusted segment start time to ${segment.start} and end time to ${segment.end} for text: "${segment.text}"`
-        );
+        if (
+          transcription.words &&
+          transcription.words[0].start > segment.start
+        ) {
+          // Adjust segment start time to the first word's start time
+          const diff = transcription.words?.[0]?.start ?? 0 - segment.start;
+          segment.start = transcription.words?.[0]?.start ?? segment.start;
+          segment.end += diff;
+          console.log(
+            `Adjusted segment start time to ${segment.start} and end time to ${segment.end} for text: "${segment.text}"`
+          );
+        } else {
+          console.warn(
+            `First word start time is not greater than segment start time, keeping original start time ${segment.start} and end time ${segment.end} for "${segment.text}".`
+          );
+        }
       }
       intervalStart = segment.end;
     }
@@ -351,12 +376,97 @@ export class TranscribeService {
       .join('\n');
   }
 
-  private optimizeSegments(segments: TSegment[]): TSegment[] {
+  private optimizeSegmentDurations(segments: TSegment[]): TSegment[] {
     const optimized: TSegment[] = [];
     const MIN_DURATION = 1.5; // 1.5 second
     const MAX_DURATION = 7.0; // 7 seconds
-    const MAX_CHARS_PER_LINE = 42;
     const CHARS_PER_SECOND = 12;
+
+    for (const segment of segments) {
+      const text = segment.text;
+      const duration = segment.end - segment.start;
+
+      // Adjust timing based on text length and reading speed
+      const requiredDuration = text.length / CHARS_PER_SECOND;
+      const newDuration = Math.max(MIN_DURATION, requiredDuration);
+
+      if (duration < newDuration && optimized.length > 0) {
+        // Try to extend previous segment's duration
+        const prev = optimized[optimized.length - 1];
+        const gap = segment.start - prev.end;
+        if (gap < 0.5) {
+          // If segments are close enough
+          prev.end = Math.min(segment.start, prev.start + MAX_DURATION);
+        }
+      }
+
+      if (newDuration > MAX_DURATION) {
+        console.log(
+          `Segment "${text}" exceeds maximum duration with ${
+            newDuration - MAX_DURATION
+          } seconds, splitting into smaller segments.`
+        );
+        const words = segment.text.split(' ');
+
+        let currentText = '';
+        let currentStart = segment.start;
+        let wordIndex = 0;
+        let newSegments = 0;
+
+        const split: TSegment[] = [];
+        while (wordIndex < words.length) {
+          const word = words[wordIndex];
+          const testText = currentText ? `${currentText} ${word}` : word;
+          const estimatedDuration = testText.length / CHARS_PER_SECOND;
+
+          if (estimatedDuration > MAX_DURATION && currentText) {
+            // Add current segment and start a new one
+            const currentEnd =
+              currentStart + Math.min(estimatedDuration, MAX_DURATION);
+            split.push({
+              start: currentStart,
+              end: currentEnd,
+              text: currentText
+            });
+            newSegments++;
+            currentStart = currentEnd;
+            currentText = word;
+          } else {
+            currentText = testText;
+          }
+          wordIndex++;
+        }
+
+        // Add the final segment if there's remaining text
+        if (currentText) {
+          split.push({
+            start: currentStart,
+            end: Math.min(
+              currentStart + currentText.length / CHARS_PER_SECOND,
+              segment.end
+            ),
+            text: currentText
+          });
+          newSegments++;
+        }
+        console.log(
+          `Segment "${text}" was split into ${newSegments} smaller segments.`
+        );
+        optimized.push(...split);
+      } else {
+        optimized.push({
+          start: segment.start,
+          end: Math.min(segment.start + newDuration, segment.end),
+          text
+        });
+      }
+    }
+    return optimized;
+  }
+
+  private limitSegmentLines(segments: TSegment[]): TSegment[] {
+    const optimized: TSegment[] = [];
+    const MAX_CHARS_PER_LINE = 42;
 
     for (const segment of segments) {
       const words = segment.text.split(' ');
@@ -379,35 +489,20 @@ export class TranscribeService {
         const newLines = this.redistributeLines(lines);
         lines = newLines.slice(0, 2);
       }
-
-      const text = lines.join('\n');
-      const duration = segment.end - segment.start;
-
-      // Adjust timing based on text length and reading speed
-      const requiredDuration = text.length / CHARS_PER_SECOND;
-      const newDuration = Math.min(
-        MAX_DURATION,
-        Math.max(MIN_DURATION, requiredDuration)
-      );
-
-      if (duration < newDuration && optimized.length > 0) {
-        // Try to extend previous segment's duration
-        const prev = optimized[optimized.length - 1];
-        const gap = segment.start - prev.end;
-        if (gap < 0.5) {
-          // If segments are close enough
-          prev.end = Math.min(segment.start, prev.start + MAX_DURATION);
-        }
-      }
-
       optimized.push({
         start: segment.start,
-        end: Math.min(segment.start + newDuration, segment.end),
-        text
+        end: segment.end,
+        text: lines.join('\n')
       });
     }
+    return optimized;
+  }
 
-    return this.mergeShortSegments(optimized);
+  private optimizeSegments(segments: TSegment[]): TSegment[] {
+    const optimizedDurations = this.optimizeSegmentDurations(segments);
+    const mergedShortSegments = this.mergeShortSegments(optimizedDurations);
+    const limitedLines = this.limitSegmentLines(mergedShortSegments);
+    return limitedLines;
   }
 
   private redistributeLines(lines: string[]): string[] {
