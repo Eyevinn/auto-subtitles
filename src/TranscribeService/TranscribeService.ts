@@ -156,7 +156,52 @@ export class TranscribeService {
             ]
           });
         if (postProcessingResponse.choices[0].message.content) {
+          console.log('Updating VTT text in transcription');
           processedText = postProcessingResponse.choices[0].message.content;
+        }
+        if (transcription.words) {
+          const postProcessingTranscription =
+            await this.openai.chat.completions.create({
+              model: 'gpt-4.1',
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'You are a helpful assistant. Your task is to process the JSON and make adjustment based on the context provided. Expected output is a JSON with the same structure.'
+                },
+                {
+                  role: 'user',
+                  content:
+                    postProcessingPrompt +
+                    '\n\n' +
+                    JSON.stringify(transcription.words)
+                }
+              ]
+            });
+          if (postProcessingTranscription.choices[0].message.content) {
+            console.log('Updating words in transcription');
+            // Remove any ```json``` code block formatting and unexpected non-whitespace characters
+            try {
+              const cleanedContent =
+                postProcessingTranscription.choices[0].message.content
+                  .replace(/```json\s*|\s*```/g, '')
+                  .replace(/^\s*[^\s[{].*$/gm, '')
+                  .trim();
+              postProcessingTranscription.choices[0].message.content =
+                cleanedContent;
+              transcription.words = JSON.parse(
+                postProcessingTranscription.choices[0].message.content
+              );
+            } catch (e) {
+              console.log(
+                'Error parsing post-processed transcription words JSON:',
+                e
+              );
+              console.log(
+                postProcessingTranscription.choices[0].message.content
+              );
+            }
+          }
         }
       }
       const segments = this.parseVTTToSegments(processedText, transcription);
@@ -196,16 +241,24 @@ export class TranscribeService {
       });
       if (words && words.length > 0) {
         // Update segment start time to the first word's start time
+        const segmentWords = segment.text.split(' ');
         const wordIndex = words.findIndex(
-          (word) => word.word === segment.text.split(' ')[0]
+          (word) => word.word === segmentWords[0]
         );
         if (wordIndex !== -1) {
-          if (wordIndex < words.length - 1 && words[wordIndex + 1]) {
-            // Also check next word for better accuracy
-            const secondWord = segment.text.split(' ')[1];
-            if (secondWord && secondWord === words[wordIndex + 1].word) {
-              segment.start = words[wordIndex].start;
+          let j = 0;
+          let numMatchedWords = 1;
+          for (let i = wordIndex; i < words.length - 1; i++) {
+            if (segmentWords[j + 1] === words[i + 1].word) {
+              numMatchedWords++;
             }
+            j++;
+          }
+          if (numMatchedWords > 2) {
+            segment.start = words[wordIndex].start;
+            console.log(
+              `Adjusted segment start time to ${segment.start} for text: "${segment.text}"`
+            );
           }
         } else {
           segment.start = words[0].start;
