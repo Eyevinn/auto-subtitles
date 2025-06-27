@@ -1,0 +1,123 @@
+swagger: "2.0"
+info:
+  title: "@eyevinn/auto-subtitles"
+  description: Transcribe Service API
+  version: v1
+definitions: {}
+paths:
+  /:
+    get:
+      description: healthcheck
+      responses:
+        "200":
+          description: The magical words!
+          schema:
+            description: The magical words!
+            type: string
+  /transcribe:
+    post:
+      description: Transcribe a remote file
+      parameters:
+        - name: body
+          in: body
+          schema:
+            type: object
+            properties:
+              url:
+                type: string
+              callbackUrl:
+                type: string
+                description: Optional callback URL to receive subtitling status
+              externalId:
+                type: string
+                description: Optional external ID for tracking the subtitling job
+              language:
+                type: string
+              prompt:
+                type: string
+                description: Optional prompt to guide the transcription process. This can be
+                  used to provide context or specific instructions for the
+                  transcription.
+              format:
+                type: string
+                enum:
+                  - srt
+                  - vtt
+            required:
+              - url
+      responses:
+        "200":
+          description: Default Response
+          schema:
+            type: object
+            properties:
+              workerId:
+                type: string
+              result:
+                type: string
+        "500":
+          description: Default Response
+          schema:
+            type: object
+            properties:
+              workerId:
+                type: string
+              error:
+                type: string
+  /transcribe/s3:
+    post:
+      description: Transcribe a remote file and upload to S3
+      parameters:
+        - name: body
+          in: body
+          schema:
+            type: object
+            properties:
+              url:
+                type: string
+              callbackUrl:
+                type: string
+              externalId:
+                type: string
+                description: Optional external ID for tracking the subtitling job
+              language:
+                type: string
+              prompt:
+                type: string
+                description: Optional prompt to guide the transcription process. This can be
+                  used to provide context or specific instructions for the
+                  transcription.
+              format:
+                type: string
+                enum:
+                  - srt
+                  - vtt
+              bucket:
+                type: string
+              key:
+                type: string
+              region:
+                type: string
+              endpoint:
+                type: string
+            required:
+              - url
+              - bucket
+              - key
+      responses:
+        "200":
+          description: Default Response
+          schema:
+            type: object
+            properties:
+              workerId:
+                type: string
+        "500":
+          description: Default Response
+          schema:
+            type: object
+            properties:
+              workerId:
+                type: string
+              error:
+                type: string
