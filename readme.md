@@ -1,8 +1,27 @@
 # Subtitle Generator and API
 
-Automatically generate subtitles from an input audio or video file using Open AI Whisper. Also available as an [open web service in Eyevinn Open Source Cloud](https://docs.osaas.io/osaas.wiki/Service%3A-Subtitle-Generator.html).
+Automatically generate subtitles from an input audio or video file using Open AI Whisper. 
+
+## 🚀 Try it instantly with Eyevinn Open Source Cloud
+
+**Skip the setup and start generating subtitles immediately!** The Subtitle Generator is available as a fully managed service in [Eyevinn Open Source Cloud](https://docs.osaas.io/osaas.wiki/Service%3A-Subtitle-Generator.html).
 
 [![Badge OSC](https://img.shields.io/badge/Evaluate-24243B?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTIiIGZpbGw9InVybCgjcGFpbnQwX2xpbmVhcl8yODIxXzMxNjcyKSIvPgo8Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSI3IiBzdHJva2U9ImJsYWNrIiBzdHJva2Utd2lkdGg9IjIiLz4KPGRlZnM%2BCjxsaW5lYXJHcmFkaWVudCBpZD0icGFpbnQwX2xpbmVhcl8yODIxXzMxNjcyIiB4MT0iMTIiIHkxPSIwIiB4Mj0iMTIiIHkyPSIyNCIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgo8c3RvcCBzdG9wLWNvbG9yPSIjQzE4M0ZGIi8%2BCjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzREQzlGRiIvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM%2BCjwvc3ZnPgo%3D)](https://app.osaas.io/browse/eyevinn-auto-subtitles)
+
+### Why choose the managed service?
+
+- **🎯 Zero setup required** - No need to install FFmpeg, manage OpenAI API keys, or configure AWS
+- **⚡ Production-ready infrastructure** - Scalable, reliable subtitle generation at enterprise scale
+- **🛠️ Professional support** - Real-time support in our [Slack workspace](https://slack.osaas.io/)
+- **📊 Multiple formats** - Generate SRT, VTT, and other subtitle formats
+- **🌍 Multi-language support** - Process content in multiple languages with OpenAI Whisper
+- **🔒 Secure processing** - Your content is processed securely with industry-standard practices
+
+Perfect for video streaming platforms, broadcast content, accessibility improvements, and multilingual content creation. [Check pricing](https://docs.osaas.io/osaas.wiki/Pricing.html) and get started in minutes.
+
+---
+
+**Prefer to self-host?** Continue reading to set up your own instance.
 
 ## Features
 
