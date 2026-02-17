@@ -1,6 +1,6 @@
-swagger: "2.0"
+swagger: '2.0'
 info:
-  title: "@eyevinn/auto-subtitles"
+  title: '@eyevinn/auto-subtitles'
   description: Transcribe Service API
   version: v1
 definitions: {}
@@ -9,7 +9,7 @@ paths:
     get:
       description: healthcheck
       responses:
-        "200":
+        '200':
           description: The magical words!
           schema:
             description: The magical words!
@@ -35,7 +35,8 @@ paths:
                 type: string
               prompt:
                 type: string
-                description: Optional prompt to guide the transcription process. This can be
+                description:
+                  Optional prompt to guide the transcription process. This can be
                   used to provide context or specific instructions for the
                   transcription.
               format:
@@ -46,7 +47,7 @@ paths:
             required:
               - url
       responses:
-        "200":
+        '200':
           description: Default Response
           schema:
             type: object
@@ -55,7 +56,7 @@ paths:
                 type: string
               result:
                 type: string
-        "500":
+        '500':
           description: Default Response
           schema:
             type: object
@@ -84,7 +85,8 @@ paths:
                 type: string
               prompt:
                 type: string
-                description: Optional prompt to guide the transcription process. This can be
+                description:
+                  Optional prompt to guide the transcription process. This can be
                   used to provide context or specific instructions for the
                   transcription.
               format:
@@ -105,14 +107,14 @@ paths:
               - bucket
               - key
       responses:
-        "200":
+        '200':
           description: Default Response
           schema:
             type: object
             properties:
               workerId:
                 type: string
-        "500":
+        '500':
           description: Default Response
           schema:
             type: object

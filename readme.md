@@ -1,6 +1,6 @@
 # Subtitle Generator and API
 
-Automatically generate subtitles from an input audio or video file using Open AI Whisper. 
+Automatically generate subtitles from an input audio or video file using Open AI Whisper.
 
 ## 🚀 Try it instantly with Eyevinn Open Source Cloud
 

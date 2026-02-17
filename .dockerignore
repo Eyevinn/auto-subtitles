@@ -1,4 +1,14 @@
 node_modules
 .git
+.github
 **/__mocks__
 **/*.test.ts
+*.md
+.eslintrc
+.prettierrc
+.env
+.env.*
+.husky
+.vscode
+coverage
+dist
