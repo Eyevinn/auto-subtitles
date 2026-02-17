@@ -1,4 +1,4 @@
-version: '3.7'
+version: '3.8'
 networks:
   auto-subtitles-internal:
     driver: bridge
@@ -7,15 +7,51 @@ services:
   auto-subtitles-api:
     build:
       context: .
+      target: production
     image: auto-subtitles
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWS_REGION=${AWS_REGION}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - NODE_ENV=production
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     ports:
-      - 8000:8000
+      - '8000:8000'
     expose:
-      - 8000
+      - '8000'
     networks:
       - auto-subtitles-internal
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--no-verbose',
+          '--tries=1',
+          '--spider',
+          'http://localhost:8000/'
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    volumes:
+      - usercontent_data:/usercontent
+
+volumes:
+  usercontent_data:
