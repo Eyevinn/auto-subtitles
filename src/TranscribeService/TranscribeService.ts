@@ -520,122 +520,175 @@ export class TranscribeService {
     return diarizedSegments;
   }
 
+  private static normalizeWord(word: string): string {
+    return word.replace(/[,!?.;:'"()-]/g, '').toLowerCase();
+  }
+
   private parseVTTToSegments(
     vtt: string,
     transcription: TranscriptionVerbose
   ): TSegment[] {
     const lines = vtt.split('\n');
     const segments: TSegment[] = [];
-    let currentSegment: Partial<TSegment> = {};
+    let currentStart: number | undefined;
+    let currentEnd: number | undefined;
+    let currentTextLines: string[] = [];
 
+    // Step 1: Parse VTT cues, handling multi-line text
     for (const line of lines) {
       if (line.includes('-->')) {
+        // If we have a pending segment, push it first
+        if (
+          currentStart !== undefined &&
+          currentEnd !== undefined &&
+          currentTextLines.length > 0
+        ) {
+          segments.push({
+            start: currentStart,
+            end: currentEnd,
+            text: currentTextLines.join(' ')
+          });
+        }
         const [start, end] = line.split('-->').map((timeStr) => {
           const [h, m, s] = timeStr.trim().split(':').map(Number);
           return h * 3600 + m * 60 + s;
         });
-        currentSegment.start = start;
-        currentSegment.end = end;
-      } else if (line.trim() && currentSegment.start !== undefined) {
-        currentSegment.text = line.trim();
-        if (!isNaN(currentSegment.start)) {
-          segments.push(currentSegment as TSegment);
-          currentSegment = {};
+        if (!isNaN(start) && !isNaN(end)) {
+          currentStart = start;
+          currentEnd = end;
+          currentTextLines = [];
         } else {
-          logger.warn('Segment start time is NaN, skipping', {
-            line: line.trim()
+          logger.warn('Invalid timecode in VTT, skipping cue', {
+            line
+          });
+          currentStart = undefined;
+          currentEnd = undefined;
+          currentTextLines = [];
+        }
+      } else if (line.trim() && currentStart !== undefined) {
+        // Accumulate multi-line text for this cue
+        currentTextLines.push(line.trim());
+      } else if (!line.trim() && currentTextLines.length > 0) {
+        // Empty line signals end of cue text
+        if (currentStart !== undefined && currentEnd !== undefined) {
+          segments.push({
+            start: currentStart,
+            end: currentEnd,
+            text: currentTextLines.join(' ')
           });
         }
+        currentStart = undefined;
+        currentEnd = undefined;
+        currentTextLines = [];
       }
     }
-    let intervalStart = segments[0]?.start ?? 0;
-    for (const segment of segments) {
-      if (segment.start < intervalStart) {
-        const diff = intervalStart - segment.start;
-        segment.start = intervalStart;
-        segment.end += diff;
-      }
-      // Find words within the segment
-      const words = transcription.words?.filter((word) => {
-        return word.start >= intervalStart && word.end <= intervalStart + 15;
+    // Push final segment if exists
+    if (
+      currentStart !== undefined &&
+      currentEnd !== undefined &&
+      currentTextLines.length > 0
+    ) {
+      segments.push({
+        start: currentStart,
+        end: currentEnd,
+        text: currentTextLines.join(' ')
       });
-      if (words && words.length > 0) {
-        // Update segment start time to the first word's start time
-        const segmentWords = segment.text.split(' ');
-        const wordIndex = words.findIndex(
-          (word) =>
-            word.word.toLowerCase() ===
-            segmentWords[0].replace(/[,!?]/g, '').toLowerCase()
-        );
-        if (wordIndex !== -1) {
-          let j = 0;
-          let numMatchedWords = 1;
-          for (let i = wordIndex; i < words.length - 1; i++) {
-            if (!segmentWords[j + 1]) {
-              break; // No more segment words to match
-            }
-            if (
-              segmentWords[j + 1].replace(/[,!?]/g, '').toLowerCase() ===
-              words[i + 1].word.replace(/[,!?]/g, '').toLowerCase()
-            ) {
-              numMatchedWords++;
-            } else {
-              break;
-            }
-            j++;
+    }
+
+    // Step 2: Align segments with word-level timestamps using global word index
+    const allWords = transcription.words ?? [];
+    if (allWords.length === 0) {
+      return segments;
+    }
+
+    let globalWordIdx = 0;
+    for (const segment of segments) {
+      const segmentWords = segment.text
+        .split(' ')
+        .filter((w) => w.trim().length > 0);
+      if (segmentWords.length === 0) continue;
+
+      // Search for the first segment word in the word list, starting from
+      // our current position but allowing a wider search window
+      const firstNorm = TranscribeService.normalizeWord(segmentWords[0]);
+      let bestMatchIdx = -1;
+      const searchLimit = Math.min(globalWordIdx + 50, allWords.length);
+
+      // Search forward from current position (prefer nearest match)
+      for (let i = globalWordIdx; i < searchLimit; i++) {
+        if (TranscribeService.normalizeWord(allWords[i].word) === firstNorm) {
+          bestMatchIdx = i;
+          break;
+        }
+      }
+
+      if (bestMatchIdx === -1) {
+        // Fallback: search backwards a small window (handles slight reordering)
+        const backLimit = Math.max(0, globalWordIdx - 10);
+        for (let i = globalWordIdx - 1; i >= backLimit; i--) {
+          if (TranscribeService.normalizeWord(allWords[i].word) === firstNorm) {
+            bestMatchIdx = i;
+            break;
           }
-          if (numMatchedWords > 2) {
-            const diff = words[wordIndex].start - segment.start;
-            segment.start = words[wordIndex].start;
-            segment.end += diff;
-            logger.debug('Adjusted segment timing from word match', {
-              matchedWords: numMatchedWords,
-              start: segment.start,
-              end: segment.end
-            });
+        }
+      }
+
+      if (bestMatchIdx !== -1) {
+        // Count consecutive word matches
+        let matchCount = 1;
+        for (let s = 1; s < segmentWords.length; s++) {
+          const wordIdx = bestMatchIdx + s;
+          if (wordIdx >= allWords.length) break;
+          if (
+            TranscribeService.normalizeWord(segmentWords[s]) ===
+            TranscribeService.normalizeWord(allWords[wordIdx].word)
+          ) {
+            matchCount++;
           } else {
-            logger.debug('Insufficient word matches, keeping original timing', {
-              matchedWords: numMatchedWords,
+            break;
+          }
+        }
+
+        if (matchCount >= 2) {
+          const lastMatchIdx = bestMatchIdx + matchCount - 1;
+          const newStart = allWords[bestMatchIdx].start;
+          const newEnd = allWords[lastMatchIdx].end;
+
+          // Only adjust if word timestamps are reasonable
+          if (newStart >= 0 && newEnd > newStart) {
+            segment.start = newStart;
+            segment.end = newEnd;
+            logger.debug('Aligned segment to word timestamps', {
+              matchedWords: matchCount,
               start: segment.start,
               end: segment.end
             });
           }
+          // Advance global index past matched words
+          globalWordIdx = lastMatchIdx + 1;
         } else {
-          logger.debug('First word not found in words array', {
-            text: segment.text,
-            start: segment.start,
-            end: segment.end
+          logger.debug('Insufficient word matches, keeping VTT timing', {
+            matchedWords: matchCount,
+            text: segment.text.slice(0, 40)
           });
+          // Still advance past approximate position
+          globalWordIdx = bestMatchIdx + 1;
         }
       } else {
-        logger.debug(
-          'No words found for segment, using first word start time',
-          {
-            text: segment.text,
-            start: segment.start,
-            end: segment.end
-          }
-        );
-        if (
-          transcription.words &&
-          transcription.words[0].start > segment.start
-        ) {
-          // Adjust segment start time to the first word's start time
-          const diff = transcription.words?.[0]?.start ?? 0 - segment.start;
-          segment.start = transcription.words?.[0]?.start ?? segment.start;
-          segment.end += diff;
-          logger.debug('Adjusted segment to first word start time', {
-            start: segment.start,
-            end: segment.end
-          });
-        } else {
-          logger.debug('Keeping original segment timing', {
-            start: segment.start,
-            end: segment.end
-          });
-        }
+        logger.debug('No word match found, keeping VTT timing', {
+          text: segment.text.slice(0, 40)
+        });
       }
-      intervalStart = segment.end;
+
+      // Safety: ensure end > start with minimum duration
+      if (segment.end <= segment.start) {
+        segment.end = segment.start + 0.5;
+        logger.warn('Fixed negative/zero duration segment', {
+          text: segment.text.slice(0, 40),
+          start: segment.start,
+          end: segment.end
+        });
+      }
     }
     return segments;
   }
@@ -693,83 +746,96 @@ export class TranscribeService {
 
   private optimizeSegmentDurations(segments: TSegment[]): TSegment[] {
     const optimized: TSegment[] = [];
-    const MIN_DURATION = 1.5; // 1.5 second
+    const MIN_DURATION = 1.5; // 1.5 seconds
     const MAX_DURATION = 7.0; // 7 seconds
-    const CHARS_PER_SECOND = 12;
+    const CHARS_PER_SECOND = 15; // Average speech rate
 
     for (const segment of segments) {
       const text = segment.text;
-      const duration = segment.end - segment.start;
+      const totalDuration = segment.end - segment.start;
 
-      // Adjust timing based on text length and reading speed
-      const requiredDuration = text.length / CHARS_PER_SECOND;
-      const newDuration = Math.max(MIN_DURATION, requiredDuration);
-
-      if (duration < newDuration && optimized.length > 0) {
-        // Try to extend previous segment's duration
-        const prev = optimized[optimized.length - 1];
-        const gap = segment.start - prev.end;
-        if (gap < 0.5) {
-          // If segments are close enough
-          prev.end = Math.min(segment.start, prev.start + MAX_DURATION);
-        }
+      if (totalDuration <= 0) {
+        logger.warn('Skipping segment with invalid duration', {
+          text: text.slice(0, 40)
+        });
+        continue;
       }
 
-      if (newDuration > MAX_DURATION) {
-        logger.debug('Segment exceeds max duration, splitting', {
-          excessSeconds: newDuration - MAX_DURATION
-        });
-        const words = segment.text.split(' ');
-
-        let currentText = '';
-        let currentStart = segment.start;
-        let wordIndex = 0;
-        let newSegments = 0;
+      if (totalDuration > MAX_DURATION) {
+        // Split long segments proportionally based on word count
+        // so timing is distributed evenly rather than based on char count
+        const words = text.split(' ').filter((w) => w.trim().length > 0);
+        const totalWords = words.length;
+        if (totalWords === 0) continue;
 
         const split: TSegment[] = [];
-        while (wordIndex < words.length) {
-          const word = words[wordIndex];
-          const testText = currentText ? `${currentText} ${word}` : word;
-          const estimatedDuration = testText.length / CHARS_PER_SECOND;
+        let currentWords: string[] = [];
+        let wordsUsed = 0;
 
-          if (estimatedDuration > MAX_DURATION && currentText) {
-            // Add current segment and start a new one
-            const currentEnd =
-              currentStart + Math.min(estimatedDuration, MAX_DURATION);
+        for (const word of words) {
+          currentWords.push(word);
+          const currentText = currentWords.join(' ');
+          const estimatedDuration = currentText.length / CHARS_PER_SECOND;
+
+          if (estimatedDuration >= MAX_DURATION && currentWords.length > 1) {
+            // Remove last word that pushed over limit
+            currentWords.pop();
+            const segText = currentWords.join(' ');
+
+            // Proportional timing: distribute total duration by word count
+            const segStart =
+              segment.start + (wordsUsed / totalWords) * totalDuration;
+            const segEnd =
+              segment.start +
+              ((wordsUsed + currentWords.length) / totalWords) * totalDuration;
             split.push({
-              start: currentStart,
-              end: currentEnd,
-              text: currentText
+              start: segStart,
+              end: segEnd,
+              text: segText
             });
-            newSegments++;
-            currentStart = currentEnd;
-            currentText = word;
-          } else {
-            currentText = testText;
+
+            wordsUsed += currentWords.length;
+            currentWords = [word];
           }
-          wordIndex++;
         }
 
-        // Add the final segment if there's remaining text
-        if (currentText) {
+        // Final remaining segment
+        if (currentWords.length > 0) {
+          const segText = currentWords.join(' ');
+          const segStart =
+            segment.start + (wordsUsed / totalWords) * totalDuration;
           split.push({
-            start: currentStart,
-            end: Math.min(
-              currentStart + currentText.length / CHARS_PER_SECOND,
-              segment.end
-            ),
-            text: currentText
+            start: segStart,
+            end: segment.end,
+            text: segText
           });
-          newSegments++;
         }
-        logger.debug('Segment split into smaller segments', {
-          newSegmentCount: newSegments
+
+        logger.debug('Split long segment proportionally', {
+          newSegmentCount: split.length,
+          originalDuration: totalDuration
         });
         optimized.push(...split);
-      } else {
+      } else if (totalDuration < MIN_DURATION) {
+        // Try to extend into available gap before this segment
+        if (optimized.length > 0) {
+          const prev = optimized[optimized.length - 1];
+          const gap = segment.start - prev.end;
+          if (gap < 0.5 && gap >= 0) {
+            prev.end = segment.start;
+          }
+        }
+        // Keep the segment with minimum duration
         optimized.push({
           start: segment.start,
-          end: Math.min(segment.start + newDuration, segment.end),
+          end: Math.max(segment.end, segment.start + MIN_DURATION),
+          text
+        });
+      } else {
+        // Segment duration is within acceptable range, keep original timing
+        optimized.push({
+          start: segment.start,
+          end: segment.end,
           text
         });
       }
@@ -811,11 +877,72 @@ export class TranscribeService {
     return optimized;
   }
 
-  private optimizeSegments(segments: TSegment[]): TSegment[] {
-    const optimizedDurations = this.optimizeSegmentDurations(segments);
+  private optimizeSegments(
+    segments: TSegment[],
+    model?: TTranscribeModel
+  ): TSegment[] {
+    const validated = this.validateSegmentTiming(segments);
+    const effectiveModel = model ?? DEFAULT_TRANSCRIBE_MODEL;
+
+    // For Whisper models, segments already have accurate word-level timestamps
+    // from parseVTTToSegments. Only apply line limiting and short-segment merging.
+    // For GPT-4o models (no timestamps), apply full duration optimization.
+    if (isWhisperModel(effectiveModel)) {
+      const mergedShortSegments = this.mergeShortSegments(validated);
+      return this.limitSegmentLines(mergedShortSegments);
+    }
+
+    const optimizedDurations = this.optimizeSegmentDurations(validated);
     const mergedShortSegments = this.mergeShortSegments(optimizedDurations);
-    const limitedLines = this.limitSegmentLines(mergedShortSegments);
-    return limitedLines;
+    return this.limitSegmentLines(mergedShortSegments);
+  }
+
+  private validateSegmentTiming(segments: TSegment[]): TSegment[] {
+    const validated: TSegment[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      const segment = { ...segments[i] };
+
+      // Fix negative or zero duration
+      if (segment.end <= segment.start) {
+        const nextStart =
+          i + 1 < segments.length ? segments[i + 1].start : segment.start + 2;
+        segment.end = Math.min(segment.start + 2, nextStart);
+        logger.warn('Fixed invalid segment duration', {
+          text: segment.text.slice(0, 40),
+          originalEnd: segments[i].end,
+          fixedEnd: segment.end
+        });
+      }
+
+      // Fix overlapping with previous segment
+      if (validated.length > 0) {
+        const prev = validated[validated.length - 1];
+        if (segment.start < prev.end) {
+          // Adjust: split the overlap by moving previous end to this start
+          const overlap = prev.end - segment.start;
+          if (overlap < 0.5) {
+            prev.end = segment.start;
+          } else {
+            // Larger overlap: place gap at midpoint
+            const mid = (prev.end + segment.start) / 2;
+            prev.end = mid;
+            segment.start = mid;
+          }
+          logger.debug('Fixed overlapping segments', {
+            prevEnd: prev.end,
+            currentStart: segment.start
+          });
+        }
+      }
+
+      // Ensure minimum duration after all adjustments
+      if (segment.end - segment.start < 0.1) {
+        segment.end = segment.start + 0.5;
+      }
+
+      validated.push(segment);
+    }
+    return validated;
   }
 
   private redistributeLines(lines: string[]): string[] {
@@ -960,8 +1087,14 @@ export class TranscribeService {
       logger.debug('Deleted temp file', { tempFile });
     }
     const effectiveModel = model ?? DEFAULT_TRANSCRIBE_MODEL;
-    logger.info('Optimizing segments');
-    const optimizedSegments = this.optimizeSegments(allSegments);
+    logger.info('Optimizing segments', {
+      model: effectiveModel,
+      segmentCount: allSegments.length
+    });
+    const optimizedSegments = this.optimizeSegments(
+      allSegments,
+      effectiveModel
+    );
     if (format === 'vtt') {
       if (!isWhisperModel(effectiveModel)) {
         formatGenerationTotal.inc({ format: 'vtt', model: effectiveModel });

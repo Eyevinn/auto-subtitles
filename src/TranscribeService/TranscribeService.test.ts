@@ -312,12 +312,13 @@ describe('TranscribeService', () => {
   });
 
   describe('optimizeSegmentDurations', () => {
-    it('should not change segments within normal duration', () => {
+    it('should preserve original timing for segments within normal duration', () => {
       const optimize = (service as any).optimizeSegmentDurations.bind(service);
       const segments = [{ start: 0, end: 3, text: 'Short text' }];
       const result = optimize(segments);
       expect(result.length).toBe(1);
       expect(result[0].start).toBe(0);
+      expect(result[0].end).toBe(3);
     });
 
     it('should split long segments exceeding MAX_DURATION', () => {
@@ -329,16 +330,39 @@ describe('TranscribeService', () => {
       expect(result.length).toBeGreaterThan(1);
     });
 
-    it('should enforce minimum duration of 1.5 seconds', () => {
+    it('should distribute timing proportionally when splitting', () => {
       const optimize = (service as any).optimizeSegmentDurations.bind(service);
-      const segments = [{ start: 0, end: 10, text: 'Hi' }];
+      const longText =
+        'This is a very long subtitle text that definitely exceeds the maximum duration limit and should be split into multiple segments';
+      const segments = [{ start: 0, end: 20, text: longText }];
       const result = optimize(segments);
+      // Last segment should end at or before the original end time
+      const lastSeg = result[result.length - 1];
+      expect(lastSeg.end).toBeLessThanOrEqual(20);
+      // First segment should start at original start time
+      expect(result[0].start).toBe(0);
+    });
+
+    it('should enforce minimum duration of 1.5 seconds for short segments', () => {
+      const optimize = (service as any).optimizeSegmentDurations.bind(service);
+      const segments = [{ start: 0, end: 0.5, text: 'Hi' }];
+      const result = optimize(segments);
+      // Short segment gets extended to at least MIN_DURATION
       expect(result[0].end - result[0].start).toBeGreaterThanOrEqual(1.5);
+      expect(result[0].start).toBe(0);
+      expect(result[0].end).toBe(1.5);
     });
 
     it('should handle empty segments array', () => {
       const optimize = (service as any).optimizeSegmentDurations.bind(service);
       const result = optimize([]);
+      expect(result).toEqual([]);
+    });
+
+    it('should skip segments with invalid duration', () => {
+      const optimize = (service as any).optimizeSegmentDurations.bind(service);
+      const segments = [{ start: 5, end: 3, text: 'Bad segment' }];
+      const result = optimize(segments);
       expect(result).toEqual([]);
     });
   });
@@ -486,7 +510,6 @@ describe('TranscribeService', () => {
       const vtt =
         'WEBVTT\n\n00:00:00.000 --> 00:00:02.500\nHello world\n\n00:00:03.000 --> 00:00:05.500\nThis is a test';
 
-      // Use undefined words to avoid the empty-array crash at line 619-621
       const transcription = { words: undefined };
       const result = parse(vtt, transcription);
       expect(result.length).toBe(2);
@@ -496,6 +519,18 @@ describe('TranscribeService', () => {
       expect(result[1].text).toBe('This is a test');
       expect(result[1].start).toBe(3);
       expect(result[1].end).toBe(5.5);
+    });
+
+    it('should handle multi-line VTT cues', () => {
+      const parse = (service as any).parseVTTToSegments.bind(service);
+      const vtt =
+        'WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nFirst line of text\nSecond line of text\n\n00:00:03.500 --> 00:00:06.000\nAnother cue';
+
+      const transcription = { words: undefined };
+      const result = parse(vtt, transcription);
+      expect(result.length).toBe(2);
+      expect(result[0].text).toBe('First line of text Second line of text');
+      expect(result[1].text).toBe('Another cue');
     });
 
     it('should handle VTT with hours', () => {
@@ -516,15 +551,17 @@ describe('TranscribeService', () => {
       expect(result.length).toBe(0);
     });
 
-    it('should adjust timecodes when segment overlaps previous', () => {
+    it('should parse overlapping VTT cues with both segments present', () => {
       const parse = (service as any).parseVTTToSegments.bind(service);
       const vtt =
         'WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nFirst segment\n\n00:00:03.000 --> 00:00:07.000\nOverlapping segment';
 
       const transcription = { words: undefined };
       const result = parse(vtt, transcription);
-      expect(result[1].start).toBe(5);
-      expect(result[1].end).toBe(9);
+      expect(result.length).toBe(2);
+      result.forEach((seg: { start: number; end: number; text: string }) => {
+        expect(seg.end).toBeGreaterThan(seg.start);
+      });
     });
 
     it('should use word-level timing when available', () => {
@@ -543,11 +580,145 @@ describe('TranscribeService', () => {
       const result = parse(vtt, transcription);
       expect(result.length).toBe(1);
       expect(result[0].start).toBe(0.5);
+      expect(result[0].end).toBe(2.0);
+    });
+
+    it('should align multiple segments with global word index', () => {
+      const parse = (service as any).parseVTTToSegments.bind(service);
+      const vtt =
+        'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello world\n\n00:00:02.000 --> 00:00:04.000\nGoodbye friend';
+
+      const transcription = {
+        words: [
+          { word: 'Hello', start: 0.1, end: 0.5 },
+          { word: 'world', start: 0.6, end: 1.0 },
+          { word: 'Goodbye', start: 2.2, end: 2.6 },
+          { word: 'friend', start: 2.7, end: 3.0 }
+        ]
+      };
+      const result = parse(vtt, transcription);
+      expect(result.length).toBe(2);
+      // First segment aligned to first two words
+      expect(result[0].start).toBe(0.1);
+      expect(result[0].end).toBe(1.0);
+      // Second segment aligned to last two words
+      expect(result[1].start).toBe(2.2);
+      expect(result[1].end).toBe(3.0);
+    });
+
+    it('should never produce negative duration segments', () => {
+      const parse = (service as any).parseVTTToSegments.bind(service);
+      // Simulate a case where word timing would cause negative duration
+      const vtt = 'WEBVTT\n\n00:00:05.000 --> 00:00:05.200\nQuick word';
+
+      const transcription = {
+        words: [{ word: 'Quick', start: 4.5, end: 4.8 }]
+      };
+      const result = parse(vtt, transcription);
+      expect(result.length).toBe(1);
+      expect(result[0].end).toBeGreaterThan(result[0].start);
+    });
+
+    it('should handle punctuation in word matching', () => {
+      const parse = (service as any).parseVTTToSegments.bind(service);
+      const vtt =
+        'WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nHello, world! How are you?';
+
+      const transcription = {
+        words: [
+          { word: 'Hello', start: 0.1, end: 0.3 },
+          { word: 'world', start: 0.4, end: 0.6 },
+          { word: 'How', start: 0.7, end: 0.8 },
+          { word: 'are', start: 0.9, end: 1.0 },
+          { word: 'you', start: 1.1, end: 1.3 }
+        ]
+      };
+      const result = parse(vtt, transcription);
+      expect(result.length).toBe(1);
+      // Should match despite punctuation differences
+      expect(result[0].start).toBe(0.1);
+    });
+  });
+
+  describe('validateSegmentTiming', () => {
+    it('should fix negative duration segments', () => {
+      const validate = (service as any).validateSegmentTiming.bind(service);
+      const segments = [
+        { start: 5, end: 3, text: 'Bad duration' },
+        { start: 6, end: 8, text: 'Good segment' }
+      ];
+      const result = validate(segments);
+      expect(result[0].end).toBeGreaterThan(result[0].start);
+      expect(result[0].end).toBeLessThanOrEqual(6); // Should not exceed next segment start
+    });
+
+    it('should fix overlapping segments', () => {
+      const validate = (service as any).validateSegmentTiming.bind(service);
+      const segments = [
+        { start: 0, end: 5, text: 'First' },
+        { start: 3, end: 7, text: 'Second' }
+      ];
+      const result = validate(segments);
+      expect(result[0].end).toBeLessThanOrEqual(result[1].start);
+    });
+
+    it('should ensure minimum duration for all segments', () => {
+      const validate = (service as any).validateSegmentTiming.bind(service);
+      const segments = [{ start: 0, end: 0.01, text: 'Tiny' }];
+      const result = validate(segments);
+      expect(result[0].end - result[0].start).toBeGreaterThanOrEqual(0.1);
+    });
+
+    it('should handle empty array', () => {
+      const validate = (service as any).validateSegmentTiming.bind(service);
+      const result = validate([]);
+      expect(result).toEqual([]);
+    });
+
+    it('should pass through valid segments unchanged', () => {
+      const validate = (service as any).validateSegmentTiming.bind(service);
+      const segments = [
+        { start: 0, end: 3, text: 'First' },
+        { start: 3.5, end: 6, text: 'Second' },
+        { start: 6.5, end: 9, text: 'Third' }
+      ];
+      const result = validate(segments);
+      expect(result[0].start).toBe(0);
+      expect(result[0].end).toBe(3);
+      expect(result[1].start).toBe(3.5);
+      expect(result[1].end).toBe(6);
+      expect(result[2].start).toBe(6.5);
+      expect(result[2].end).toBe(9);
     });
   });
 
   describe('optimizeSegments', () => {
-    it('should apply all optimizations in order', () => {
+    it('should apply all optimizations for whisper model (skip duration optimization)', () => {
+      const optimize = (service as any).optimizeSegments.bind(service);
+      const segments = [
+        { start: 0, end: 3, text: 'Hello world' },
+        { start: 3.5, end: 6, text: 'This is a subtitle' }
+      ];
+      const result = optimize(segments, 'whisper-1');
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      result.forEach((seg: { text: string }) => {
+        expect(seg.text).toBeTruthy();
+      });
+      // Whisper path preserves original timing
+      expect(result[0].start).toBe(0);
+      expect(result[0].end).toBe(3);
+    });
+
+    it('should apply duration optimization for gpt-4o models', () => {
+      const optimize = (service as any).optimizeSegments.bind(service);
+      const longText =
+        'This is a very long subtitle text that definitely exceeds the maximum duration limit and should be split into multiple segments for readability purposes';
+      const segments = [{ start: 0, end: 20, text: longText }];
+      const result = optimize(segments, 'gpt-4o-transcribe');
+      expect(result.length).toBeGreaterThan(1);
+    });
+
+    it('should default to whisper-1 when no model specified', () => {
       const optimize = (service as any).optimizeSegments.bind(service);
       const segments = [
         { start: 0, end: 3, text: 'Hello world' },
@@ -555,9 +726,6 @@ describe('TranscribeService', () => {
       ];
       const result = optimize(segments);
       expect(result.length).toBeGreaterThanOrEqual(1);
-      result.forEach((seg: { text: string }) => {
-        expect(seg.text).toBeTruthy();
-      });
     });
   });
 
