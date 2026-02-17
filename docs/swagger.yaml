@@ -14,6 +14,38 @@ paths:
           schema:
             description: The magical words!
             type: string
+  /health:
+    get:
+      description: Detailed health check with worker status
+      responses:
+        '200':
+          description: Service health and worker status
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+              title:
+                type: string
+              workers:
+                type: object
+                properties:
+                  total:
+                    type: number
+                  active:
+                    type: number
+                  idle:
+                    type: number
+                  inactive:
+                    type: number
+  /metrics:
+    get:
+      description: Prometheus-compatible metrics endpoint
+      responses:
+        '200':
+          description: Prometheus text exposition format
+          schema:
+            type: string
   /transcribe:
     post:
       description: Transcribe a remote file
@@ -44,6 +76,25 @@ paths:
                 enum:
                   - srt
                   - vtt
+              model:
+                type: string
+                enum:
+                  - whisper-1
+                  - gpt-4o-transcribe
+                  - gpt-4o-mini-transcribe
+                  - gpt-4o-mini-transcribe-2025-12-15
+                  - gpt-4o-transcribe-diarize
+                description:
+                  'Transcription model to use. Default: whisper-1. Note:
+                  gpt-4o-transcribe-diarize supports speaker identification.'
+              speakerNames:
+                type: array
+                items:
+                  type: string
+                maxItems: 4
+                description:
+                  Known speaker names for diarization (max 4). Only used with
+                  gpt-4o-transcribe-diarize model.
             required:
               - url
       responses:
@@ -55,6 +106,15 @@ paths:
               workerId:
                 type: string
               result:
+                type: string
+        '400':
+          description: Validation Error
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              code:
                 type: string
         '500':
           description: Default Response
@@ -94,6 +154,25 @@ paths:
                 enum:
                   - srt
                   - vtt
+              model:
+                type: string
+                enum:
+                  - whisper-1
+                  - gpt-4o-transcribe
+                  - gpt-4o-mini-transcribe
+                  - gpt-4o-mini-transcribe-2025-12-15
+                  - gpt-4o-transcribe-diarize
+                description:
+                  'Transcription model to use. Default: whisper-1. Note:
+                  gpt-4o-transcribe-diarize supports speaker identification.'
+              speakerNames:
+                type: array
+                items:
+                  type: string
+                maxItems: 4
+                description:
+                  Known speaker names for diarization (max 4). Only used with
+                  gpt-4o-transcribe-diarize model.
               bucket:
                 type: string
               key:
@@ -113,6 +192,15 @@ paths:
             type: object
             properties:
               workerId:
+                type: string
+        '400':
+          description: Validation Error
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              code:
                 type: string
         '500':
           description: Default Response

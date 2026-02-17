@@ -7,6 +7,15 @@ import fs, { statSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { getAudioDuration, splitAudioOnSilence } from '../audio/chunker';
 import { TranscriptionVerbose } from 'openai/resources/audio/transcriptions';
+import logger from '../utils/logger';
+import {
+  transcriptionTotal,
+  transcriptionErrors,
+  diarizationTotal,
+  formatGenerationTotal,
+  transcriptionDuration,
+  activeWorkers
+} from '../utils/metrics';
 
 export type TEvent = 'subtitling_started' | 'subtitling_completed' | 'error';
 export enum State {
@@ -16,7 +25,22 @@ export enum State {
 }
 export type TTranscribeFormat = 'srt' | 'vtt';
 
-export type TTranscribeModel = 'whisper-1';
+export type TTranscribeModel =
+  | 'whisper-1'
+  | 'gpt-4o-transcribe'
+  | 'gpt-4o-mini-transcribe'
+  | 'gpt-4o-mini-transcribe-2025-12-15'
+  | 'gpt-4o-transcribe-diarize';
+
+export const VALID_TRANSCRIBE_MODELS: TTranscribeModel[] = [
+  'whisper-1',
+  'gpt-4o-transcribe',
+  'gpt-4o-mini-transcribe',
+  'gpt-4o-mini-transcribe-2025-12-15',
+  'gpt-4o-transcribe-diarize'
+];
+
+export const DEFAULT_TRANSCRIBE_MODEL: TTranscribeModel = 'whisper-1';
 
 export type TTranscribeLocalFile = {
   filePath: string;
@@ -26,6 +50,7 @@ export type TTranscribeLocalFile = {
   model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
   callbackUrl?: URL; // Optional callback URL to send events to
   externalId?: string; // Optional external ID for tracking
+  speakerNames?: string[]; // Optional known speaker names for diarization (max 4)
 };
 
 export type TTranscribeRemoteFile = {
@@ -36,6 +61,7 @@ export type TTranscribeRemoteFile = {
   callbackUrl?: URL; // Optional callback URL to send events to
   externalId?: string; // Optional external ID for tracking
   prompt?: string; // Optional prompt to guide transcription
+  speakerNames?: string[]; // Optional known speaker names for diarization (max 4)
 };
 
 export type TTranscribeParams = {
@@ -47,6 +73,7 @@ export type TTranscribeParams = {
   model?: TTranscribeModel; // Model to use for transcription, default is 'whisper-1'
   callbackUrl?: URL; // Optional callback URL to send events to
   externalId?: string; // Optional external ID for tracking
+  speakerNames?: string[]; // Optional known speaker names for diarization (max 4)
 };
 
 type TSegment = {
@@ -54,6 +81,53 @@ type TSegment = {
   end: number;
   text: string;
 };
+
+function isWhisperModel(model: TTranscribeModel): boolean {
+  return model === 'whisper-1';
+}
+
+function isDiarizeModel(model: TTranscribeModel): boolean {
+  return model === 'gpt-4o-transcribe-diarize';
+}
+
+type TDiarizedSegment = {
+  speaker: string;
+  text: string;
+  start: number;
+  end: number;
+};
+
+type TDiarizedResponse = {
+  text: string;
+  speakers: Array<{
+    id: string;
+    name?: string;
+    segments: Array<{
+      text: string;
+      start: number;
+      end: number;
+    }>;
+  }>;
+};
+
+export class TranscribeError extends Error {
+  public readonly code: string;
+  public readonly statusCode: number;
+  public readonly retryable: boolean;
+
+  constructor(
+    message: string,
+    code: string,
+    statusCode: number,
+    retryable = false
+  ) {
+    super(message);
+    this.name = 'TranscribeError';
+    this.code = code;
+    this.statusCode = statusCode;
+    this.retryable = retryable;
+  }
+}
 
 export class TranscribeService {
   private instanceId: string;
@@ -74,17 +148,19 @@ export class TranscribeService {
     tempFile: string
   ): Promise<string[]> {
     try {
-      console.log(`Converting ${videoUrl} to ${tempFile}`);
+      logger.info('Converting video to MP3', { videoUrl, tempFile });
       execSync(`ffmpeg -i "${videoUrl}" -f mp3 "${tempFile}"`);
-      console.log(`Conversion completed. Now splitting into chunks...`);
+      logger.info('Conversion completed, splitting into chunks');
       if (!statSync(tempFile).isFile()) {
         throw new Error('Error converting video, temp file not found');
       }
       const chunks = splitAudioOnSilence(tempFile);
-      console.log(`Splitted into ${chunks.length} chunks`);
+      logger.info('Audio split into chunks', { chunkCount: chunks.length });
       return chunks;
     } catch (error) {
-      console.error(error);
+      logger.error('Error converting video', {
+        err: error instanceof Error ? error.message : String(error)
+      });
       throw new Error('Error converting video');
     }
   }
@@ -110,105 +186,338 @@ export class TranscribeService {
     return url;
   }
 
+  private async retryWithBackoff<T>(
+    fn: () => Promise<T>,
+    maxRetries = 3,
+    baseDelay = 1000
+  ): Promise<T> {
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastError = err as Error;
+        const isRetryable =
+          err instanceof Error &&
+          ('status' in err
+            ? [429, 500, 502, 503, 504].includes(
+                (err as Error & { status: number }).status
+              )
+            : err.message.includes('ECONNRESET') ||
+              err.message.includes('ETIMEDOUT'));
+        if (!isRetryable || attempt === maxRetries) {
+          throw err;
+        }
+        const delay = baseDelay * Math.pow(2, attempt);
+        logger.warn('Retryable error, backing off', {
+          attempt: attempt + 1,
+          maxRetries,
+          delayMs: delay,
+          err: lastError.message
+        });
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+    throw lastError;
+  }
+
+  private wrapTranscribeError(
+    err: unknown,
+    model: TTranscribeModel,
+    filePath: string
+  ): never {
+    const error = err as Error & { status?: number; code?: string };
+    logger.error('Transcription failed', {
+      filePath,
+      model,
+      err: error.message,
+      status: error.status
+    });
+    if (error.status === 400) {
+      throw new TranscribeError(
+        `Invalid request for model ${model}: ${error.message}`,
+        'INVALID_REQUEST',
+        400
+      );
+    } else if (error.status === 401) {
+      throw new TranscribeError('Invalid OpenAI API key', 'UNAUTHORIZED', 401);
+    } else if (error.status === 429) {
+      throw new TranscribeError(
+        'OpenAI rate limit exceeded',
+        'RATE_LIMITED',
+        429,
+        true
+      );
+    }
+    throw new TranscribeError(
+      `Transcription failed: ${error.message}`,
+      'TRANSCRIPTION_FAILED',
+      500,
+      true
+    );
+  }
+
   async transcribeLocalFile({
     filePath,
     language,
     prompt,
     postProcessingPrompt,
-    model
+    model,
+    speakerNames
   }: TTranscribeLocalFile): Promise<TSegment[]> {
+    const effectiveModel = model ?? DEFAULT_TRANSCRIBE_MODEL;
     try {
-      const transcription = await this.openai.audio.transcriptions.create({
+      if (isWhisperModel(effectiveModel)) {
+        return await this.transcribeLocalFileWhisper({
+          filePath,
+          language,
+          prompt,
+          postProcessingPrompt,
+          model: effectiveModel
+        });
+      } else if (isDiarizeModel(effectiveModel)) {
+        const diarized = await this.transcribeLocalFileDiarize({
+          filePath,
+          language,
+          speakerNames
+        });
+        return diarized.map((seg) => ({
+          start: seg.start,
+          end: seg.end,
+          text: `[${seg.speaker}] ${seg.text}`
+        }));
+      } else {
+        return await this.transcribeLocalFileGpt({
+          filePath,
+          language,
+          prompt,
+          postProcessingPrompt,
+          model: effectiveModel
+        });
+      }
+    } catch (err) {
+      if (err instanceof TranscribeError) throw err;
+      this.wrapTranscribeError(err, effectiveModel, filePath);
+    }
+  }
+
+  private async transcribeLocalFileWhisper({
+    filePath,
+    language,
+    prompt,
+    postProcessingPrompt,
+    model
+  }: TTranscribeLocalFile & { model: TTranscribeModel }): Promise<TSegment[]> {
+    const transcription = await this.retryWithBackoff(() =>
+      this.openai.audio.transcriptions.create({
         file: fs.createReadStream(filePath),
-        model: model ?? 'whisper-1',
+        model: model,
         response_format: 'verbose_json',
         language: language ?? 'en',
         prompt: prompt ?? undefined,
         timestamp_granularities: ['word']
-      });
+      })
+    );
 
-      const resp = await this.openai.audio.transcriptions.create({
+    const resp = await this.retryWithBackoff(() =>
+      this.openai.audio.transcriptions.create({
         file: fs.createReadStream(filePath),
-        model: model ?? 'whisper-1',
+        model: model,
         response_format: 'vtt',
         language: language ?? 'en',
         prompt: prompt ?? undefined
+      })
+    );
+    logger.info('Transcription completed for chunk', { filePath });
+    let processedText = resp;
+    if (postProcessingPrompt) {
+      logger.info('Applying post-processing prompt', { filePath });
+      const postProcessingResponse = await this.openai.chat.completions.create({
+        model: 'gpt-4.1',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a helpful assistant. Your task is to process the VTT formatted text and make adjustment based on the context provided. Expected output is a VTT formatted text with proper timecodes and text segments.'
+          },
+          {
+            role: 'user',
+            content: postProcessingPrompt + '\n\n' + resp
+          }
+        ]
       });
-      console.log(`Transcription completed for chunk ${filePath}`);
-      let processedText = resp;
-      if (postProcessingPrompt) {
-        console.log(
-          `Applying post-processing prompt to transcription for chunk ${filePath}`
-        );
-        const postProcessingResponse =
+      if (postProcessingResponse.choices[0].message.content) {
+        logger.debug('Updating VTT text in transcription');
+        processedText = postProcessingResponse.choices[0].message.content;
+      }
+      if (transcription.words) {
+        const postProcessingTranscription =
           await this.openai.chat.completions.create({
             model: 'gpt-4.1',
             messages: [
               {
                 role: 'system',
                 content:
-                  'You are a helpful assistant. Your task is to process the VTT formatted text and make adjustment based on the context provided. Expected output is a VTT formatted text with proper timecodes and text segments.'
+                  'You are a helpful assistant. Your task is to process the JSON and make adjustment based on the context provided. Do not make any adjustments to timing. Expected output is only a JSON with the same structure. Do not give any additional information or explanations.'
               },
               {
                 role: 'user',
-                content: postProcessingPrompt + '\n\n' + resp
+                content:
+                  postProcessingPrompt +
+                  '\n\n' +
+                  JSON.stringify(transcription.words)
               }
             ]
           });
-        if (postProcessingResponse.choices[0].message.content) {
-          console.log('Updating VTT text in transcription');
-          processedText = postProcessingResponse.choices[0].message.content;
-        }
-        if (transcription.words) {
-          const postProcessingTranscription =
-            await this.openai.chat.completions.create({
-              model: 'gpt-4.1',
-              messages: [
-                {
-                  role: 'system',
-                  content:
-                    'You are a helpful assistant. Your task is to process the JSON and make adjustment based on the context provided. Do not make any adjustments to timing. Expected output is only a JSON with the same structure. Do not give any additional information or explanations.'
-                },
-                {
-                  role: 'user',
-                  content:
-                    postProcessingPrompt +
-                    '\n\n' +
-                    JSON.stringify(transcription.words)
-                }
-              ]
-            });
-          if (postProcessingTranscription.choices[0].message.content) {
-            console.log('Updating words in transcription');
-            // Remove any ```json``` code block formatting and unexpected non-whitespace characters
-            try {
-              const cleanedContent =
-                postProcessingTranscription.choices[0].message.content
-                  .replace(/```json\s*|\s*```/g, '')
-                  .trim();
-              postProcessingTranscription.choices[0].message.content =
-                cleanedContent;
-              transcription.words = JSON.parse(
-                postProcessingTranscription.choices[0].message.content
-              );
-            } catch (e) {
-              console.log(
-                'Error parsing post-processed transcription words JSON:',
-                e
-              );
-              console.log(
-                postProcessingTranscription.choices[0].message.content
-              );
-            }
+        if (postProcessingTranscription.choices[0].message.content) {
+          logger.debug('Updating words in transcription');
+          try {
+            const cleanedContent =
+              postProcessingTranscription.choices[0].message.content
+                .replace(/```json\s*|\s*```/g, '')
+                .trim();
+            postProcessingTranscription.choices[0].message.content =
+              cleanedContent;
+            transcription.words = JSON.parse(
+              postProcessingTranscription.choices[0].message.content
+            );
+          } catch (e) {
+            logger.warn(
+              'Error parsing post-processed transcription words JSON',
+              {
+                err: e instanceof Error ? e.message : String(e)
+              }
+            );
           }
         }
       }
-      const segments = this.parseVTTToSegments(processedText, transcription);
-      return segments;
-    } catch (err) {
-      console.error(err);
-      throw err;
     }
+    const segments = this.parseVTTToSegments(processedText, transcription);
+    return segments;
+  }
+
+  private async transcribeLocalFileGpt({
+    filePath,
+    language,
+    prompt,
+    postProcessingPrompt,
+    model
+  }: TTranscribeLocalFile & { model: TTranscribeModel }): Promise<TSegment[]> {
+    // gpt-4o models only support json and text response formats
+    const transcription = await this.retryWithBackoff(() =>
+      this.openai.audio.transcriptions.create({
+        file: fs.createReadStream(filePath),
+        model: model,
+        response_format: 'json',
+        language: language ?? 'en',
+        prompt: prompt ?? undefined
+      })
+    );
+    logger.info('Transcription completed for chunk', { filePath, model });
+
+    // json format returns { text: string } - create a single segment
+    // We estimate timing from the audio duration since json format has no timestamps
+    const duration = getAudioDuration(filePath);
+    let segments: TSegment[] = [
+      {
+        start: 0,
+        end: duration,
+        text: transcription.text.trim()
+      }
+    ];
+
+    if (postProcessingPrompt && segments.length > 0) {
+      logger.info('Applying post-processing prompt', { filePath });
+      const segmentsJson = JSON.stringify(segments);
+      const postProcessingResponse = await this.openai.chat.completions.create({
+        model: 'gpt-4.1',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a helpful assistant. Your task is to process the JSON subtitle segments and make adjustments based on the context provided. Do not make any adjustments to timing. Expected output is only a JSON array with objects containing start, end, and text fields. Do not give any additional information or explanations.'
+          },
+          {
+            role: 'user',
+            content: postProcessingPrompt + '\n\n' + segmentsJson
+          }
+        ]
+      });
+      if (postProcessingResponse.choices[0].message.content) {
+        try {
+          const cleanedContent =
+            postProcessingResponse.choices[0].message.content
+              .replace(/```json\s*|\s*```/g, '')
+              .trim();
+          segments = JSON.parse(cleanedContent);
+          logger.debug('Updated segments with post-processing');
+        } catch (e) {
+          logger.warn('Error parsing post-processed segments JSON', {
+            err: e instanceof Error ? e.message : String(e)
+          });
+        }
+      }
+    }
+
+    return segments;
+  }
+
+  private async transcribeLocalFileDiarize({
+    filePath,
+    language,
+    speakerNames
+  }: {
+    filePath: string;
+    language?: string;
+    speakerNames?: string[];
+  }): Promise<TDiarizedSegment[]> {
+    // gpt-4o-transcribe-diarize requires diarized_json format and chunking_strategy
+    const params: Record<string, unknown> = {
+      file: fs.createReadStream(filePath),
+      model: 'gpt-4o-transcribe-diarize',
+      response_format: 'diarized_json',
+      language: language ?? 'en',
+      chunking_strategy: 'auto'
+    };
+    if (speakerNames && speakerNames.length > 0) {
+      params.known_speaker_names = speakerNames.slice(0, 4);
+    }
+
+    const transcription = await this.retryWithBackoff(() =>
+      this.openai.audio.transcriptions.create(params as never)
+    );
+    logger.info('Diarization completed for chunk', { filePath });
+
+    // Parse the diarized response into segments with speaker labels
+    const response = transcription as unknown as TDiarizedResponse;
+    const diarizedSegments: TDiarizedSegment[] = [];
+
+    if (response.speakers) {
+      for (const speaker of response.speakers) {
+        const speakerLabel = speaker.name ?? speaker.id;
+        for (const seg of speaker.segments) {
+          diarizedSegments.push({
+            speaker: speakerLabel,
+            start: seg.start,
+            end: seg.end,
+            text: seg.text.trim()
+          });
+        }
+      }
+      // Sort by start time
+      diarizedSegments.sort((a, b) => a.start - b.start);
+    } else {
+      // Fallback: treat as single speaker
+      const duration = getAudioDuration(filePath);
+      diarizedSegments.push({
+        speaker: 'A',
+        start: 0,
+        end: duration,
+        text: response.text?.trim() ?? ''
+      });
+    }
+
+    return diarizedSegments;
   }
 
   private parseVTTToSegments(
@@ -233,9 +542,9 @@ export class TranscribeService {
           segments.push(currentSegment as TSegment);
           currentSegment = {};
         } else {
-          console.warn(
-            `Segment start time is NaN for line: "${line.trim()}", skipping segment.`
-          );
+          logger.warn('Segment start time is NaN, skipping', {
+            line: line.trim()
+          });
         }
       }
     }
@@ -279,29 +588,33 @@ export class TranscribeService {
             const diff = words[wordIndex].start - segment.start;
             segment.start = words[wordIndex].start;
             segment.end += diff;
-            console.log(
-              `Matched with "${words
-                .slice(wordIndex, wordIndex + numMatchedWords)
-                .map((w) => w.word)
-                .join(' ')}". Adjusted segment start time to ${
-                segment.start
-              } and end time to ${segment.end} for text: "${segmentWords
-                .slice(0, numMatchedWords)
-                .join(' ')}"`
-            );
+            logger.debug('Adjusted segment timing from word match', {
+              matchedWords: numMatchedWords,
+              start: segment.start,
+              end: segment.end
+            });
           } else {
-            console.log(
-              `Only ${numMatchedWords} words matched, not adjusting start time. Keep original start time ${segment.start} and end time ${segment.end} for "${segment.text}".`
-            );
+            logger.debug('Insufficient word matches, keeping original timing', {
+              matchedWords: numMatchedWords,
+              start: segment.start,
+              end: segment.end
+            });
           }
         } else {
-          console.warn(
-            `First word of "${segment.text}" not found in words, keep original start time ${segment.start} and end time ${segment.end}.`
-          );
+          logger.debug('First word not found in words array', {
+            text: segment.text,
+            start: segment.start,
+            end: segment.end
+          });
         }
       } else {
-        console.warn(
-          `No words found for segment with text: "${segment.text}" between ${segment.start} and ${segment.end}. Using first word start time.`
+        logger.debug(
+          'No words found for segment, using first word start time',
+          {
+            text: segment.text,
+            start: segment.start,
+            end: segment.end
+          }
         );
         if (
           transcription.words &&
@@ -311,13 +624,15 @@ export class TranscribeService {
           const diff = transcription.words?.[0]?.start ?? 0 - segment.start;
           segment.start = transcription.words?.[0]?.start ?? segment.start;
           segment.end += diff;
-          console.log(
-            `Adjusted segment start time to ${segment.start} and end time to ${segment.end} for text: "${segment.text}"`
-          );
+          logger.debug('Adjusted segment to first word start time', {
+            start: segment.start,
+            end: segment.end
+          });
         } else {
-          console.warn(
-            `First word start time is not greater than segment start time, keeping original start time ${segment.start} and end time ${segment.end} for "${segment.text}".`
-          );
+          logger.debug('Keeping original segment timing', {
+            start: segment.start,
+            end: segment.end
+          });
         }
       }
       intervalStart = segment.end;
@@ -401,11 +716,9 @@ export class TranscribeService {
       }
 
       if (newDuration > MAX_DURATION) {
-        console.log(
-          `Segment "${text}" exceeds maximum duration with ${
-            newDuration - MAX_DURATION
-          } seconds, splitting into smaller segments.`
-        );
+        logger.debug('Segment exceeds max duration, splitting', {
+          excessSeconds: newDuration - MAX_DURATION
+        });
         const words = segment.text.split(' ');
 
         let currentText = '';
@@ -449,9 +762,9 @@ export class TranscribeService {
           });
           newSegments++;
         }
-        console.log(
-          `Segment "${text}" was split into ${newSegments} smaller segments.`
-        );
+        logger.debug('Segment split into smaller segments', {
+          newSegmentCount: newSegments
+        });
         optimized.push(...split);
       } else {
         optimized.push({
@@ -539,7 +852,6 @@ export class TranscribeService {
       }
 
       const currentDuration = current.end - current.start;
-      const nextDuration = segment.end - segment.start;
       const gap = segment.start - current.end;
 
       if (currentDuration < MIN_DURATION && gap < 0.3) {
@@ -580,14 +892,20 @@ export class TranscribeService {
         })
       });
       if (!response.ok) {
-        console.warn(
-          `Callback to ${callbackUrl} failed with status ${response.status}`
-        );
+        logger.warn('Callback failed', {
+          callbackUrl: callbackUrl.toString(),
+          status: response.status
+        });
       } else {
-        console.log(`Event ${eventType} sent to ${callbackUrl}`);
+        logger.info('Callback event sent', {
+          event: eventType,
+          callbackUrl: callbackUrl.toString()
+        });
       }
     } catch (err) {
-      console.warn('Failed to send event', err);
+      logger.warn('Failed to send callback event', {
+        err: err instanceof Error ? err.message : String(err)
+      });
     }
   }
 
@@ -599,7 +917,8 @@ export class TranscribeService {
     model,
     postProcessingPrompt,
     callbackUrl,
-    externalId
+    externalId,
+    speakerNames
   }: TTranscribeParams): Promise<string> {
     const stagingDir = process.env.STAGING_DIR || '/tmp/';
     const tempFile = join(stagingDir, `${jobId}.mp3`);
@@ -615,36 +934,43 @@ export class TranscribeService {
 
     let currentTime = 0;
     for await (const filePath of filePaths) {
-      console.log(`Processing chunk ${filePath}`);
+      logger.info('Processing chunk', { filePath });
       const actualDuration = getAudioDuration(filePath);
       const segments = await this.transcribeLocalFile({
         filePath,
         language,
         prompt: allSegments[allSegments.length - 1]?.text,
         postProcessingPrompt,
-        model
+        model,
+        speakerNames
       });
-      console.log(`Adjusting timecodes for chunk ${filePath}`);
+      logger.debug('Adjusting timecodes for chunk', { filePath });
       const adjustedSegments = this.adjustSegmentTimecodes(
         segments,
         currentTime
       );
       allSegments.push(...adjustedSegments);
 
-      console.log(`Deleting chunk ${filePath}`);
+      logger.debug('Deleting chunk', { filePath });
       unlinkSync(filePath);
-      console.log(`Deleted chunk ${filePath}`);
       currentTime += actualDuration;
     }
     if (fs.existsSync(tempFile)) {
       unlinkSync(tempFile);
-      console.log(`Deleted temp file ${tempFile}`);
+      logger.debug('Deleted temp file', { tempFile });
     }
-    console.log(`Optimizing segments...`);
+    const effectiveModel = model ?? DEFAULT_TRANSCRIBE_MODEL;
+    logger.info('Optimizing segments');
     const optimizedSegments = this.optimizeSegments(allSegments);
     if (format === 'vtt') {
+      if (!isWhisperModel(effectiveModel)) {
+        formatGenerationTotal.inc({ format: 'vtt', model: effectiveModel });
+      }
       return this.formatSegmentsToVTT(optimizedSegments);
     } else if (format === 'srt') {
+      if (!isWhisperModel(effectiveModel)) {
+        formatGenerationTotal.inc({ format: 'srt', model: effectiveModel });
+      }
       return this.formatSegmentsToSRT(optimizedSegments);
     } else if (format === 'json') {
       return JSON.stringify(optimizedSegments);
@@ -660,37 +986,80 @@ export class TranscribeService {
     prompt,
     model,
     callbackUrl,
-    externalId
+    externalId,
+    speakerNames
   }: TTranscribeRemoteFile): Promise<string> {
     this.workerState = State.ACTIVE;
+    activeWorkers.inc();
     const jobId = nanoid();
-
-    if (!format) {
-      format = 'vtt';
-    }
-
-    const fullTranscription = await this.transcribe({
+    const effectiveModel = model ?? DEFAULT_TRANSCRIBE_MODEL;
+    const effectiveFormat = format ?? 'vtt';
+    const startTime = Date.now();
+    const jobLog = logger.child({
       jobId,
-      source,
-      language,
-      format,
-      postProcessingPrompt: prompt,
-      model,
-      callbackUrl,
-      externalId
+      workerId: this.instanceId,
+      model: effectiveModel,
+      format: effectiveFormat
     });
-    await this.postCallbackEvent(
-      'subtitling_completed',
-      jobId,
-      callbackUrl,
-      externalId
-    );
-    this.workerState = State.INACTIVE;
 
-    if (format && ['json', 'verbose_json'].includes(format)) {
-      return JSON.stringify(fullTranscription);
+    transcriptionTotal.inc({
+      model: effectiveModel,
+      format: effectiveFormat,
+      endpoint: 'transcribe'
+    });
+    if (isDiarizeModel(effectiveModel)) {
+      diarizationTotal.inc({
+        has_known_speakers:
+          speakerNames && speakerNames.length > 0 ? 'true' : 'false'
+      });
     }
-    return fullTranscription;
+
+    jobLog.info('Starting transcription job', { source });
+    try {
+      const fullTranscription = await this.transcribe({
+        jobId,
+        source,
+        language,
+        format: effectiveFormat,
+        postProcessingPrompt: prompt,
+        model,
+        callbackUrl,
+        externalId,
+        speakerNames
+      });
+      await this.postCallbackEvent(
+        'subtitling_completed',
+        jobId,
+        callbackUrl,
+        externalId
+      );
+
+      const durationSec = (Date.now() - startTime) / 1000;
+      transcriptionDuration.observe(durationSec);
+      jobLog.info('Transcription job completed', { durationSec });
+
+      this.workerState = State.INACTIVE;
+      activeWorkers.dec();
+
+      if (
+        effectiveFormat &&
+        ['json', 'verbose_json'].includes(effectiveFormat)
+      ) {
+        return JSON.stringify(fullTranscription);
+      }
+      return fullTranscription;
+    } catch (err) {
+      transcriptionErrors.inc({
+        model: effectiveModel,
+        error_type: err instanceof TranscribeError ? err.code : 'UNKNOWN'
+      });
+      jobLog.error('Transcription job failed', {
+        err: err instanceof Error ? err.message : 'Unknown error'
+      });
+      activeWorkers.dec();
+      this.workerState = State.INACTIVE;
+      throw err;
+    }
   }
 
   async TranscribeRemoteFileS3({
@@ -704,7 +1073,8 @@ export class TranscribeService {
     region,
     endpoint,
     callbackUrl,
-    externalId
+    externalId,
+    speakerNames
   }: TTranscribeRemoteFile & {
     bucket: string;
     key: string;
@@ -712,30 +1082,54 @@ export class TranscribeService {
     endpoint?: string;
   }): Promise<void> {
     const jobId = nanoid();
+    const effectiveModel = model ?? DEFAULT_TRANSCRIBE_MODEL;
+    const effectiveFormat = format ?? 'vtt';
+    const startTime = Date.now();
+    const jobLog = logger.child({
+      jobId,
+      workerId: this.instanceId,
+      model: effectiveModel,
+      format: effectiveFormat,
+      bucket,
+      key
+    });
+
+    transcriptionTotal.inc({
+      model: effectiveModel,
+      format: effectiveFormat,
+      endpoint: 'transcribe_s3'
+    });
+    if (isDiarizeModel(effectiveModel)) {
+      diarizationTotal.inc({
+        has_known_speakers:
+          speakerNames && speakerNames.length > 0 ? 'true' : 'false'
+      });
+    }
+
+    jobLog.info('Starting S3 transcription job', { source });
     try {
       this.workerState = State.ACTIVE;
-      if (!format) {
-        format = 'vtt';
-      }
+      activeWorkers.inc();
       const fullTranscription = await this.transcribe({
         jobId,
         source,
         language,
-        format,
+        format: effectiveFormat,
         postProcessingPrompt: prompt,
         model,
         callbackUrl,
-        externalId
+        externalId,
+        speakerNames
       });
 
       let resp = fullTranscription;
-      if (format && ['json', 'verbose_json'].includes(format)) {
+      if (['json', 'verbose_json'].includes(effectiveFormat)) {
         resp = JSON.stringify(fullTranscription);
       }
       uploadToS3({
         bucket,
         key,
-        format,
+        format: effectiveFormat,
         region,
         endpoint,
         content: resp
@@ -746,11 +1140,27 @@ export class TranscribeService {
         callbackUrl,
         externalId
       );
+
+      const durationSec = (Date.now() - startTime) / 1000;
+      transcriptionDuration.observe(durationSec);
+      jobLog.info('S3 transcription job completed', { durationSec });
+
       this.workerState = State.INACTIVE;
+      activeWorkers.dec();
     } catch (err) {
-      console.error(err);
+      jobLog.error('S3 transcription job failed', {
+        err: err instanceof Error ? err.message : String(err)
+      });
+      transcriptionErrors.inc({
+        model: effectiveModel,
+        error_type:
+          err instanceof TranscribeError
+            ? (err as TranscribeError).code
+            : 'UNKNOWN'
+      });
       await this.postCallbackEvent('error', jobId, callbackUrl, externalId);
       this.workerState = State.INACTIVE;
+      activeWorkers.dec();
     }
   }
 }
