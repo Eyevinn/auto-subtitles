@@ -447,4 +447,189 @@ describe('api', () => {
       expect(response.statusCode).toBeLessThanOrEqual(204);
     });
   });
+
+  describe('URL validation', () => {
+    let server: ReturnType<typeof api>;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      server = api({ title: 'test' });
+    });
+
+    it('POST /transcribe should return 400 for disallowed source URL protocol', async () => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/transcribe',
+        payload: { url: 'file:///etc/passwd' }
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.code).toBe('INVALID_URL');
+    });
+
+    it('POST /transcribe should return 400 for malformed source URL', async () => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/transcribe',
+        payload: { url: 'not-a-url' }
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.code).toBe('INVALID_URL');
+    });
+
+    it('POST /transcribe should return 400 for disallowed callback URL protocol', async () => {
+      const mockWorker = TranscribeService();
+      mockWorker.transcribeRemoteFile.mockResolvedValue('WEBVTT\n\n');
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/transcribe',
+        payload: {
+          url: 'https://example.com/video.mp4',
+          callbackUrl: 'ftp://evil.com/hook'
+        }
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.code).toBe('INVALID_CALLBACK_URL');
+    });
+
+    it('POST /transcribe/s3 should return 400 for disallowed source URL protocol', async () => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/transcribe/s3',
+        payload: {
+          url: 'file:///etc/passwd',
+          bucket: 'my-bucket',
+          key: 'output'
+        }
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.code).toBe('INVALID_URL');
+    });
+
+    it('POST /transcribe/s3 should return 400 for disallowed callback URL protocol', async () => {
+      const mockWorker = TranscribeService();
+      mockWorker.TranscribeRemoteFileS3.mockReturnValue(undefined);
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/transcribe/s3',
+        payload: {
+          url: 'https://example.com/video.mp4',
+          callbackUrl: 'ftp://evil.com/hook',
+          bucket: 'my-bucket',
+          key: 'output'
+        }
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.code).toBe('INVALID_CALLBACK_URL');
+    });
+  });
+
+  describe('API key authentication', () => {
+    const API_KEY = 'test-secret-key-123';
+
+    it('should return 401 on POST when API_KEY is set and no auth provided', async () => {
+      process.env.API_KEY = API_KEY;
+      const server = api({ title: 'test' });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/transcribe',
+        payload: { url: 'https://example.com/video.mp4' }
+      });
+
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.code).toBe('UNAUTHORIZED');
+
+      delete process.env.API_KEY;
+    });
+
+    it('should return 401 on POST when Bearer token is wrong', async () => {
+      process.env.API_KEY = API_KEY;
+      const server = api({ title: 'test' });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/transcribe',
+        payload: { url: 'https://example.com/video.mp4' },
+        headers: { authorization: 'Bearer wrong-key' }
+      });
+
+      expect(response.statusCode).toBe(401);
+
+      delete process.env.API_KEY;
+    });
+
+    it('should succeed on POST with correct Authorization Bearer header', async () => {
+      process.env.API_KEY = API_KEY;
+      const server = api({ title: 'test' });
+      const mockWorker = TranscribeService();
+      mockWorker.transcribeRemoteFile.mockResolvedValue('WEBVTT\n\n');
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/transcribe',
+        payload: { url: 'https://example.com/video.mp4' },
+        headers: { authorization: `Bearer ${API_KEY}` }
+      });
+
+      expect(response.statusCode).toBe(200);
+
+      delete process.env.API_KEY;
+    });
+
+    it('should succeed on POST with correct x-api-key header', async () => {
+      process.env.API_KEY = API_KEY;
+      const server = api({ title: 'test' });
+      const mockWorker = TranscribeService();
+      mockWorker.transcribeRemoteFile.mockResolvedValue('WEBVTT\n\n');
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/transcribe',
+        payload: { url: 'https://example.com/video.mp4' },
+        headers: { 'x-api-key': API_KEY }
+      });
+
+      expect(response.statusCode).toBe(200);
+
+      delete process.env.API_KEY;
+    });
+
+    it('should bypass auth for GET on public routes', async () => {
+      process.env.API_KEY = API_KEY;
+      const server = api({ title: 'test' });
+
+      const healthResponse = await server.inject({
+        method: 'GET',
+        url: '/'
+      });
+      expect(healthResponse.statusCode).toBe(200);
+
+      const detailedHealthResponse = await server.inject({
+        method: 'GET',
+        url: '/health'
+      });
+      expect(detailedHealthResponse.statusCode).toBe(200);
+
+      const metricsResponse = await server.inject({
+        method: 'GET',
+        url: '/metrics'
+      });
+      expect(metricsResponse.statusCode).toBe(200);
+
+      delete process.env.API_KEY;
+    });
+  });
 });
