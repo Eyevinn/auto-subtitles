@@ -10,6 +10,7 @@ RUN npm pkg delete scripts.prepare \
     && npm ci
 
 COPY src/ ./src/
+RUN npm run build
 
 # ---- Production stage ----
 FROM ${NODE_IMAGE} AS production
@@ -22,12 +23,12 @@ ENV STAGING_DIR=/usercontent
 
 WORKDIR /app
 
-COPY package.json package-lock.json* tsconfig*.json ./
+COPY package.json package-lock.json* ./
 RUN npm pkg delete scripts.prepare \
     && npm ci --omit=dev \
     && npm cache clean --force
 
-COPY --from=builder /app/src ./src
+COPY --from=builder /app/dist ./dist
 
 RUN mkdir -p /usercontent && chown node:node /usercontent
 
