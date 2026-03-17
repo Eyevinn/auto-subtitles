@@ -52,12 +52,15 @@ jest.mock('../aws/upload', () => ({
 }));
 
 jest.mock('../audio/chunker', () => ({
-  splitAudioOnSilence: jest.fn().mockReturnValue(['/tmp/chunk_000.mp3']),
-  getAudioDuration: jest.fn().mockReturnValue(30.0)
+  splitAudioOnSilence: jest.fn().mockResolvedValue(['/tmp/chunk_000.mp3']),
+  getAudioDuration: jest.fn().mockResolvedValue(30.0)
 }));
 
 jest.mock('child_process', () => ({
-  execSync: jest.fn()
+  execFile: jest.fn(
+    (_cmd: string, _args: string[], cb: (...args: unknown[]) => void) =>
+      cb(null, { stdout: '', stderr: '' })
+  )
 }));
 
 jest.mock('fs', () => {
@@ -839,8 +842,11 @@ describe('TranscribeService', () => {
   describe('transcribeRemoteFile', () => {
     it('should set state to INACTIVE after completion', async () => {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { execSync } = require('child_process');
-      execSync.mockImplementation(() => Buffer.from(''));
+      const { execFile } = require('child_process');
+      execFile.mockImplementation(
+        (_cmd: string, _args: string[], cb: (...args: unknown[]) => void) =>
+          cb(null, { stdout: '', stderr: '' })
+      );
 
       const mockVerboseResponse = {
         text: 'Hello',
@@ -868,8 +874,11 @@ describe('TranscribeService', () => {
 
     it('should default format to vtt', async () => {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { execSync } = require('child_process');
-      execSync.mockImplementation(() => Buffer.from(''));
+      const { execFile } = require('child_process');
+      execFile.mockImplementation(
+        (_cmd: string, _args: string[], cb: (...args: unknown[]) => void) =>
+          cb(null, { stdout: '', stderr: '' })
+      );
 
       const mockVerboseResponse = {
         text: 'Test',

@@ -12,6 +12,12 @@
     /* Modules */
     "module": "commonjs" /* Specify what module code is generated. */,
     "resolveJsonModule": true /* Enable importing .json files. */,
-    "moduleResolution": "node" /* Specify how TypeScript looks up a file from a given module specifier. */
-  }
+    "moduleResolution": "node" /* Specify how TypeScript looks up a file from a given module specifier. */,
+
+    /* Output */
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
 }

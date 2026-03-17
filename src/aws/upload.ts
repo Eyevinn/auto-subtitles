@@ -2,6 +2,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Upload } from '@aws-sdk/lib-storage';
 import { Readable } from 'stream';
+import logger from '../utils/logger';
 
 export type TContent =
   | string
@@ -71,7 +72,7 @@ export async function uploadToS3({
       progress.loaded && progress.total
         ? round((progress.loaded / progress.total) * 100)
         : 0;
-    console.log(`Uploading: ${percent}%`);
+    logger.debug(`Uploading: ${percent}%`);
   });
   await upload.done();
 }

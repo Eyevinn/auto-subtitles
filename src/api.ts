@@ -16,6 +16,7 @@ import {
 } from './TranscribeService/TranscribeService';
 import logger from './utils/logger';
 import { serializeMetrics, totalWorkers } from './utils/metrics';
+import { validateSourceUrl, validateCallbackUrl } from './utils/validateUrl';
 
 const HelloWorld = Type.String({
   description: 'The magical words!'
@@ -25,21 +26,36 @@ export interface Options {
   title: string;
 }
 
+const MAX_WORKERS = parseInt(process.env.MAX_WORKERS ?? '10', 10);
 const transcribeWorkers: TranscribeService[] = [];
+
 const transcribeWorker = (): TranscribeService => {
-  const worker = transcribeWorkers.find(
-    (client) => client.state === State.INACTIVE
+  const inactiveWorker = transcribeWorkers.find(
+    (w) => w.state === State.INACTIVE
   );
-  if (worker) return worker;
-  const newWorker = new TranscribeService();
-  newWorker.state = State.IDLE;
-  transcribeWorkers.push(newWorker);
-  totalWorkers.set(transcribeWorkers.length);
-  logger.info('New transcription worker created', {
-    workerId: newWorker.id,
-    totalWorkers: transcribeWorkers.length
-  });
-  return transcribeWorkers[transcribeWorkers.length - 1];
+  if (inactiveWorker) return inactiveWorker;
+
+  const idleWorker = transcribeWorkers.find((w) => w.state === State.IDLE);
+  if (idleWorker) return idleWorker;
+
+  if (transcribeWorkers.length < MAX_WORKERS) {
+    const newWorker = new TranscribeService();
+    newWorker.state = State.IDLE;
+    transcribeWorkers.push(newWorker);
+    totalWorkers.set(transcribeWorkers.length);
+    logger.info('New transcription worker created', {
+      workerId: newWorker.id,
+      totalWorkers: transcribeWorkers.length
+    });
+    return newWorker;
+  }
+
+  throw new TranscribeError(
+    'All transcription workers are busy. Try again later.',
+    'CAPACITY_EXCEEDED',
+    503,
+    true
+  );
 };
 const healthcheck: FastifyPluginCallback<Options> = (fastify, opts, next) => {
   fastify.get<{ Reply: Static<typeof HelloWorld> }>(
@@ -233,7 +249,46 @@ const transcribe: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
             code: 'INVALID_PARAMETER'
           });
       }
-      const worker = transcribeWorker();
+      try {
+        validateSourceUrl(request.body.url);
+      } catch {
+        return reply
+          .code(400)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .send({
+            error:
+              'Invalid source URL. Only http, https, and s3 protocols are allowed.',
+            code: 'INVALID_URL'
+          });
+      }
+      if (request.body.callbackUrl) {
+        try {
+          validateCallbackUrl(request.body.callbackUrl);
+        } catch {
+          return reply
+            .code(400)
+            .header('Content-Type', 'application/json; charset=utf-8')
+            .send({
+              error:
+                'Invalid callback URL. Only http and https protocols are allowed.',
+              code: 'INVALID_CALLBACK_URL'
+            });
+        }
+      }
+      let worker: TranscribeService;
+      try {
+        worker = transcribeWorker();
+      } catch (err) {
+        const statusCode =
+          err instanceof TranscribeError ? err.statusCode : 503;
+        return reply
+          .code(statusCode)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .send({
+            error: err instanceof Error ? err.message : 'Service unavailable',
+            code: 'CAPACITY_EXCEEDED'
+          });
+      }
       const effectiveModel = model ?? DEFAULT_TRANSCRIBE_MODEL;
       const effectiveFormat = request.body.format ?? 'vtt';
       const reqLog = logger.child({
@@ -425,7 +480,46 @@ const transcribeS3: FastifyPluginCallback<Options> = (fastify, _opts, next) => {
             code: 'INVALID_PARAMETER'
           });
       }
-      const worker = transcribeWorker();
+      try {
+        validateSourceUrl(request.body.url);
+      } catch {
+        return reply
+          .code(400)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .send({
+            error:
+              'Invalid source URL. Only http, https, and s3 protocols are allowed.',
+            code: 'INVALID_URL'
+          });
+      }
+      if (request.body.callbackUrl) {
+        try {
+          validateCallbackUrl(request.body.callbackUrl);
+        } catch {
+          return reply
+            .code(400)
+            .header('Content-Type', 'application/json; charset=utf-8')
+            .send({
+              error:
+                'Invalid callback URL. Only http and https protocols are allowed.',
+              code: 'INVALID_CALLBACK_URL'
+            });
+        }
+      }
+      let worker: TranscribeService;
+      try {
+        worker = transcribeWorker();
+      } catch (err) {
+        const statusCode =
+          err instanceof TranscribeError ? err.statusCode : 503;
+        return reply
+          .code(statusCode)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .send({
+            error: err instanceof Error ? err.message : 'Service unavailable',
+            code: 'CAPACITY_EXCEEDED'
+          });
+      }
       const effectiveModel = model ?? DEFAULT_TRANSCRIBE_MODEL;
       const effectiveFormat = request.body.format ?? 'vtt';
       const reqLog = logger.child({
@@ -506,11 +600,38 @@ export interface ApiOptions {
   title: string;
 }
 
+const PUBLIC_ROUTES = ['/', '/health', '/metrics', '/docs'];
+
 export default (opts: ApiOptions) => {
   const api = fastify({
     ignoreTrailingSlash: true
   }).withTypeProvider<TypeBoxTypeProvider>();
   api.register(cors);
+
+  const apiKey = process.env.API_KEY;
+  if (apiKey) {
+    api.addHook('onRequest', async (request, reply) => {
+      if (
+        request.method === 'GET' &&
+        PUBLIC_ROUTES.some((r) => request.url.startsWith(r))
+      ) {
+        return;
+      }
+      const authHeader = request.headers.authorization;
+      const apiKeyHeader = request.headers['x-api-key'];
+      const token = authHeader?.startsWith('Bearer ')
+        ? authHeader.slice(7)
+        : (apiKeyHeader as string | undefined);
+      if (token !== apiKey) {
+        return reply
+          .code(401)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .send({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
+      }
+    });
+    logger.info('API key authentication enabled');
+  }
+
   api.register(swagger, {
     swagger: {
       info: {

@@ -1,6 +1,6 @@
 import { OpenAI } from 'openai';
-import Configuration from 'openai';
-import { execSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { nanoid } from 'nanoid';
 import { signUrl, uploadToS3 } from '../aws/upload';
 import fs, { statSync, unlinkSync } from 'fs';
@@ -129,6 +129,8 @@ export class TranscribeError extends Error {
   }
 }
 
+const execFileAsync = promisify(execFile);
+
 export class TranscribeService {
   private instanceId: string;
   private workerState: State;
@@ -137,10 +139,9 @@ export class TranscribeService {
   constructor(openApiKey?: string) {
     this.instanceId = nanoid();
     this.workerState = State.INACTIVE;
-    const config = new Configuration({
-      apiKey: openApiKey ? openApiKey : process.env.OPENAI_API_KEY
+    this.openai = new OpenAI({
+      apiKey: openApiKey ?? process.env.OPENAI_API_KEY
     });
-    this.openai = new OpenAI({ ...config });
   }
 
   private async convertToMP3(
@@ -149,12 +150,12 @@ export class TranscribeService {
   ): Promise<string[]> {
     try {
       logger.info('Converting video to MP3', { videoUrl, tempFile });
-      execSync(`ffmpeg -i "${videoUrl}" -f mp3 "${tempFile}"`);
+      await execFileAsync('ffmpeg', ['-i', videoUrl, '-f', 'mp3', tempFile]);
       logger.info('Conversion completed, splitting into chunks');
       if (!statSync(tempFile).isFile()) {
         throw new Error('Error converting video, temp file not found');
       }
-      const chunks = splitAudioOnSilence(tempFile);
+      const chunks = await splitAudioOnSilence(tempFile);
       logger.info('Audio split into chunks', { chunkCount: chunks.length });
       return chunks;
     } catch (error) {
@@ -417,7 +418,7 @@ export class TranscribeService {
 
     // json format returns { text: string } - create a single segment
     // We estimate timing from the audio duration since json format has no timestamps
-    const duration = getAudioDuration(filePath);
+    const duration = await getAudioDuration(filePath);
     let segments: TSegment[] = [
       {
         start: 0,
@@ -508,7 +509,7 @@ export class TranscribeService {
       diarizedSegments.sort((a, b) => a.start - b.start);
     } else {
       // Fallback: treat as single speaker
-      const duration = getAudioDuration(filePath);
+      const duration = await getAudioDuration(filePath);
       diarizedSegments.push({
         speaker: 'A',
         start: 0,
@@ -1060,9 +1061,9 @@ export class TranscribeService {
     const allSegments: TSegment[] = [];
 
     let currentTime = 0;
-    for await (const filePath of filePaths) {
+    for (const filePath of filePaths) {
       logger.info('Processing chunk', { filePath });
-      const actualDuration = getAudioDuration(filePath);
+      const actualDuration = await getAudioDuration(filePath);
       const segments = await this.transcribeLocalFile({
         filePath,
         language,
@@ -1174,12 +1175,6 @@ export class TranscribeService {
       this.workerState = State.INACTIVE;
       activeWorkers.dec();
 
-      if (
-        effectiveFormat &&
-        ['json', 'verbose_json'].includes(effectiveFormat)
-      ) {
-        return JSON.stringify(fullTranscription);
-      }
       return fullTranscription;
     } catch (err) {
       transcriptionErrors.inc({
@@ -1255,17 +1250,13 @@ export class TranscribeService {
         speakerNames
       });
 
-      let resp = fullTranscription;
-      if (['json', 'verbose_json'].includes(effectiveFormat)) {
-        resp = JSON.stringify(fullTranscription);
-      }
-      uploadToS3({
+      await uploadToS3({
         bucket,
         key,
         format: effectiveFormat,
         region,
         endpoint,
-        content: resp
+        content: fullTranscription
       });
       await this.postCallbackEvent(
         'subtitling_completed',
