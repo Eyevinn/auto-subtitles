@@ -888,6 +888,91 @@ describe('TranscribeService', () => {
     });
   });
 
+  describe('TranscribeRemoteFileS3', () => {
+    // Arranges a successful transcription so each test only varies the upload.
+    const primeTranscription = () => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { execSync } = require('child_process');
+      execSync.mockImplementation(() => Buffer.from(''));
+      mockTranscriptionsCreate
+        .mockResolvedValueOnce({
+          text: 'Hello',
+          words: [{ word: 'Hello', start: 0.0, end: 1.0 }]
+        })
+        .mockResolvedValueOnce(
+          'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nHello\n'
+        );
+    };
+
+    const s3Args = {
+      source: 'https://example.com/video.mp4',
+      bucket: 'test-bucket',
+      key: 'subtitles/test',
+      callbackUrl: new URL('https://callback.example.com/hook')
+    };
+
+    const postedEvents = (fetchMock: jest.Mock): string[] =>
+      fetchMock.mock.calls.map(
+        (call) => JSON.parse(call[1].body as string).event
+      );
+
+    it('should post the error callback and no completion callback when the upload fails', async () => {
+      primeTranscription();
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { uploadToS3 } = require('../aws/upload');
+      uploadToS3.mockRejectedValueOnce(new Error('S3 upload failed'));
+
+      const originalFetch = global.fetch;
+      const fetchMock = jest.fn().mockResolvedValue({ ok: true });
+      global.fetch = fetchMock;
+
+      try {
+        await service.TranscribeRemoteFileS3(s3Args);
+
+        const events = postedEvents(fetchMock);
+        expect(events).toContain('error');
+        expect(events).not.toContain('subtitling_completed');
+        // A failed upload must not leave the worker stuck ACTIVE.
+        expect(service.state).toBe(State.INACTIVE);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it('should post the completion callback only after the upload resolves', async () => {
+      primeTranscription();
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { uploadToS3 } = require('../aws/upload');
+
+      const order: string[] = [];
+      uploadToS3.mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        order.push('upload-resolved');
+      });
+
+      const originalFetch = global.fetch;
+      const fetchMock = jest.fn().mockImplementation((_url, init) => {
+        order.push(`callback:${JSON.parse(init.body as string).event}`);
+        return Promise.resolve({ ok: true });
+      });
+      global.fetch = fetchMock;
+
+      try {
+        await service.TranscribeRemoteFileS3(s3Args);
+
+        expect(uploadToS3).toHaveBeenCalledTimes(1);
+        expect(order).toContain('upload-resolved');
+        expect(order.indexOf('upload-resolved')).toBeLessThan(
+          order.indexOf('callback:subtitling_completed')
+        );
+        expect(postedEvents(fetchMock)).not.toContain('error');
+        expect(service.state).toBe(State.INACTIVE);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+  });
+
   describe('wrapTranscribeError', () => {
     it('should wrap 400 errors as INVALID_REQUEST', () => {
       const wrap = (service as any).wrapTranscribeError.bind(service);

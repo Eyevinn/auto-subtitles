@@ -1240,9 +1240,12 @@ export class TranscribeService {
     }
 
     jobLog.info('Starting S3 transcription job', { source });
+    const stagingDir = process.env.STAGING_DIR || '/tmp/';
+    const tempFile = join(stagingDir, `${jobId}.mp3`);
+
+    this.workerState = State.ACTIVE;
+    activeWorkers.inc();
     try {
-      this.workerState = State.ACTIVE;
-      activeWorkers.inc();
       const fullTranscription = await this.transcribe({
         jobId,
         source,
@@ -1259,7 +1262,9 @@ export class TranscribeService {
       if (['json', 'verbose_json'].includes(effectiveFormat)) {
         resp = JSON.stringify(fullTranscription);
       }
-      uploadToS3({
+      // The upload must be awaited before completion is signalled, otherwise an
+      // upload failure is reported to the caller as a successful job.
+      await uploadToS3({
         bucket,
         key,
         format: effectiveFormat,
@@ -1277,9 +1282,6 @@ export class TranscribeService {
       const durationSec = (Date.now() - startTime) / 1000;
       transcriptionDuration.observe(durationSec);
       jobLog.info('S3 transcription job completed', { durationSec });
-
-      this.workerState = State.INACTIVE;
-      activeWorkers.dec();
     } catch (err) {
       jobLog.error('S3 transcription job failed', {
         err: err instanceof Error ? err.message : String(err)
@@ -1292,6 +1294,24 @@ export class TranscribeService {
             : 'UNKNOWN'
       });
       await this.postCallbackEvent('error', jobId, callbackUrl, externalId);
+    } finally {
+      // Cleanup and worker-state reset must run whether or not the upload
+      // succeeded, so a failed job never leaves the worker stuck ACTIVE or a
+      // staging file behind.
+      try {
+        if (fs.existsSync(tempFile)) {
+          unlinkSync(tempFile);
+          jobLog.debug('Deleted temp file', { tempFile });
+        }
+      } catch (cleanupErr) {
+        jobLog.warn('Failed to delete temp file', {
+          tempFile,
+          err:
+            cleanupErr instanceof Error
+              ? cleanupErr.message
+              : String(cleanupErr)
+        });
+      }
       this.workerState = State.INACTIVE;
       activeWorkers.dec();
     }
