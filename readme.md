@@ -32,9 +32,32 @@ AWS_REGION=<your-aws-region> (optional can also be provided in payload)
 AWS_ACCESS_KEY_ID=<your-aws-access-key-id> (optional, only needed when uploading to S3)
 AWS_SECRET_ACCESS_KEY=<your-aws-secret-access-key> (optional, only needed when uploading to S3)
 AWS_S3_ENDPOINT=<aws-s3-endpoint> (optional)
+CORS_ALLOWED_ORIGINS=<comma-separated list of allowed browser origins> (optional)
 ```
 
 Using an `.env` file is supported. Just rename `.env.example` to `.env` and insert your values.
+
+#### Browser access (CORS)
+
+`CORS_ALLOWED_ORIGINS` is the list of web origins allowed to call this API from a
+browser, for example:
+
+```text
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+```
+
+Entries are exact origins (scheme, host and port), separated by commas;
+surrounding whitespace is ignored.
+
+If the variable is unset or empty the service sends no
+`Access-Control-Allow-Origin` header, so no cross-origin web page can read
+responses or submit jobs on a visitor's behalf. This is the default. Server-side
+clients, CLI tools and same-origin pages are unaffected — CORS only constrains
+browsers.
+
+Setting `CORS_ALLOWED_ORIGINS=*` lets any website call the API from a browser.
+That is only sensible for a service with no credentials or quota worth abusing;
+the service logs a warning at startup when it is used.
 
 ### FFmpeg
 

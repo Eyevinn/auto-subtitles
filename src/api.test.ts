@@ -447,4 +447,142 @@ describe('api', () => {
       expect(response.statusCode).toBeLessThanOrEqual(204);
     });
   });
+
+  describe('CORS allowlist', () => {
+    const ALLOWED = 'https://app.example.com';
+    const DISALLOWED = 'https://attacker.example.net';
+    let previous: string | undefined;
+
+    beforeEach(() => {
+      previous = process.env.CORS_ALLOWED_ORIGINS;
+    });
+
+    afterEach(() => {
+      if (previous === undefined) {
+        delete process.env.CORS_ALLOWED_ORIGINS;
+      } else {
+        process.env.CORS_ALLOWED_ORIGINS = previous;
+      }
+    });
+
+    describe('with no allowlist configured (default)', () => {
+      beforeEach(() => {
+        delete process.env.CORS_ALLOWED_ORIGINS;
+      });
+
+      it('sends no Access-Control-Allow-Origin on a simple request', async () => {
+        const server = api({ title: 'test' });
+        const response = await server.inject({
+          method: 'GET',
+          url: '/',
+          headers: { origin: DISALLOWED }
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.headers['access-control-allow-origin']).toBeUndefined();
+      });
+
+      it('sends no Access-Control-Allow-Origin on a preflight request', async () => {
+        const server = api({ title: 'test' });
+        const response = await server.inject({
+          method: 'OPTIONS',
+          url: '/transcribe',
+          headers: {
+            origin: DISALLOWED,
+            'access-control-request-method': 'POST'
+          }
+        });
+
+        expect(response.headers['access-control-allow-origin']).toBeUndefined();
+      });
+
+      it('sends no Access-Control-Allow-Origin on POST /transcribe', async () => {
+        const mockWorker = TranscribeService();
+        mockWorker.transcribeRemoteFile.mockResolvedValue('WEBVTT\n\n');
+
+        const server = api({ title: 'test' });
+        const response = await server.inject({
+          method: 'POST',
+          url: '/transcribe',
+          headers: { origin: DISALLOWED },
+          payload: { url: 'https://example.com/video.mp4' }
+        });
+
+        expect(response.headers['access-control-allow-origin']).toBeUndefined();
+      });
+    });
+
+    describe('with an allowlist configured', () => {
+      beforeEach(() => {
+        process.env.CORS_ALLOWED_ORIGINS = ` ${ALLOWED} , https://other.example.com `;
+      });
+
+      it('reflects an allowed origin on a simple request', async () => {
+        const server = api({ title: 'test' });
+        const response = await server.inject({
+          method: 'GET',
+          url: '/',
+          headers: { origin: ALLOWED }
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.headers['access-control-allow-origin']).toBe(ALLOWED);
+      });
+
+      it('reflects an allowed origin on a preflight request', async () => {
+        const server = api({ title: 'test' });
+        const response = await server.inject({
+          method: 'OPTIONS',
+          url: '/transcribe',
+          headers: {
+            origin: ALLOWED,
+            'access-control-request-method': 'POST'
+          }
+        });
+
+        expect(response.statusCode).toBeLessThanOrEqual(204);
+        expect(response.headers['access-control-allow-origin']).toBe(ALLOWED);
+        expect(response.headers['access-control-allow-methods']).toBe(
+          'GET, POST, OPTIONS'
+        );
+      });
+
+      it('sends no Access-Control-Allow-Origin for a disallowed origin', async () => {
+        const server = api({ title: 'test' });
+        const response = await server.inject({
+          method: 'GET',
+          url: '/',
+          headers: { origin: DISALLOWED }
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.headers['access-control-allow-origin']).toBeUndefined();
+      });
+
+      it('sends no Access-Control-Allow-Origin for a disallowed origin on preflight', async () => {
+        const server = api({ title: 'test' });
+        const response = await server.inject({
+          method: 'OPTIONS',
+          url: '/transcribe/s3',
+          headers: {
+            origin: DISALLOWED,
+            'access-control-request-method': 'POST'
+          }
+        });
+
+        expect(response.headers['access-control-allow-origin']).toBeUndefined();
+      });
+
+      it('never echoes an arbitrary origin as a wildcard', async () => {
+        const server = api({ title: 'test' });
+        const response = await server.inject({
+          method: 'GET',
+          url: '/',
+          headers: { origin: DISALLOWED }
+        });
+
+        expect(response.headers['access-control-allow-origin']).not.toBe('*');
+      });
+    });
+  });
 });

@@ -735,7 +735,7 @@ export default (opts: ApiOptions) => {
   const api = fastify({
     ignoreTrailingSlash: true
   }).withTypeProvider<TypeBoxTypeProvider>();
-  api.register(cors);
+  api.register(cors, corsOptionsFromEnv()); // allowlist from CORS_ALLOWED_ORIGINS
   api.register(swagger, {
     swagger: {
       info: {
