@@ -1,0 +1,40 @@
+name: Docker Build
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/docker-build.yml'
+  workflow_dispatch:
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build image
+        run: docker build -t auto-subtitles:ci .
+      - name: Node in the image has the CVE-2026-111497 fix
+        run: |
+          v=$(docker run --rm --entrypoint node auto-subtitles:ci -p process.versions.node)
+          echo "Node in image: $v"
+          case "$v" in
+            22.*) min=22.23.4 ;;
+            24.*) min=24.22.1 ;;
+            26.*) min=26.12.1 ;;
+            *) echo "Node line of $v has no CVE-2026-111497 fix"; exit 1 ;;
+          esac
+          [ "$(printf '%s\n%s\n' "$min" "$v" | sort -V | head -n1)" = "$min" ]
+      - name: ffmpeg is installed
+        run: docker run --rm --entrypoint ffmpeg auto-subtitles:ci -version
+      - name: Server starts and answers on /
+        run: |
+          docker run -d --name auto-subtitles -p 8000:8000 auto-subtitles:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/ > /dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          docker logs auto-subtitles
+          [ -n "$ok" ]
