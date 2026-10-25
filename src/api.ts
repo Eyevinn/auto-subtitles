@@ -16,6 +16,7 @@ import {
 } from './TranscribeService/TranscribeService';
 import logger from './utils/logger';
 import { serializeMetrics, totalWorkers } from './utils/metrics';
+import { corsOptionsFromEnv } from './utils/cors';
 
 const HelloWorld = Type.String({
   description: 'The magical words!'
@@ -510,7 +511,7 @@ export default (opts: ApiOptions) => {
   const api = fastify({
     ignoreTrailingSlash: true
   }).withTypeProvider<TypeBoxTypeProvider>();
-  api.register(cors);
+  api.register(cors, corsOptionsFromEnv());
   api.register(swagger, {
     swagger: {
       info: {

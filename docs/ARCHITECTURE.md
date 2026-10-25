@@ -239,6 +239,13 @@ See `docs/api-extensions.md` for full details.
 | `LOCAL_WHISPER_MODELS`  | Path to model directory     | No                      |
 | `LOCAL_WHISPER_THREADS` | Number of threads           | No (default: 4)         |
 | `LOCAL_WHISPER_DEVICE`  | Device: cpu, cuda, auto     | No (default: auto)      |
+| `CORS_ALLOWED_ORIGINS`  | Browser origin allowlist    | No (default: deny all)  |
+
+`CORS_ALLOWED_ORIGINS` is a comma-separated list of exact origins allowed to
+call the API from a browser. Unset or empty means no origin is allowed and no
+`Access-Control-Allow-Origin` header is sent on any route. A literal `*` allows
+every origin and logs a warning at startup. Parsing and the resulting
+`@fastify/cors` options live in `src/utils/cors.ts`.
 
 ## Adding a New Provider
 
